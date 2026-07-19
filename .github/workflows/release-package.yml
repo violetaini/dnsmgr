@@ -1,0 +1,95 @@
+name: Release package
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Stable release tag to package
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    env:
+      RELEASE_TAG: ${{ inputs.tag }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.tag }}
+          fetch-depth: 0
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.2'
+          tools: composer:v2
+          coverage: none
+
+      - name: Verify release version
+        shell: bash
+        run: |
+          VERSION="${RELEASE_TAG#v}"
+          git tag --points-at HEAD | grep -Fx "$RELEASE_TAG"
+          APP_VERSION="$(sed -n "s/.*'fork_version'[[:space:]]*=>[[:space:]]*'\([^']*\)'.*/\1/p" config/app.php | head -n 1)"
+          if [[ "$VERSION" != "$APP_VERSION" ]]; then
+            echo "Tag $VERSION does not match app release version $APP_VERSION" >&2
+            exit 1
+          fi
+
+      - name: Verify stable branch ancestry
+        shell: bash
+        run: |
+          git fetch origin '+refs/heads/stable/*:refs/remotes/origin/stable/*'
+          if ! git branch -r --contains HEAD | grep -Eq 'origin/stable/'; then
+            echo 'Release tag must point to a stable branch commit' >&2
+            exit 1
+          fi
+
+      - name: Run regression tests
+        run: |
+          php tests/CertDnsUtilsCnameConflictTest.php
+          php tests/UpdateUtilsTest.php
+
+      - name: Install production dependencies
+        run: composer install --no-dev --prefer-dist --no-interaction --optimize-autoloader
+
+      - name: Build installation package
+        shell: bash
+        run: |
+          VERSION="${RELEASE_TAG#v}"
+          mkdir -p dist
+          zip -q -r "dist/dnsmgr_${VERSION}.zip" . \
+            -x '.git/*' '.github/*' 'tests/*' 'dist/*' '.env'
+          sha256sum "dist/dnsmgr_${VERSION}.zip" > "dist/dnsmgr_${VERSION}.zip.sha256"
+
+      - name: Verify installation package
+        shell: bash
+        run: |
+          VERSION="${RELEASE_TAG#v}"
+          PACKAGE="dist/dnsmgr_${VERSION}.zip"
+          unzip -tq "$PACKAGE"
+          zipinfo -1 "$PACKAGE" | grep -qx 'app/utils/CertDnsUtils.php'
+          zipinfo -1 "$PACKAGE" | grep -qx 'vendor/autoload.php'
+          if zipinfo -1 "$PACKAGE" | grep -Eq '^(\.git|\.github|tests|dist)/|^\.env$'; then
+            echo 'Installation package contains excluded files' >&2
+            exit 1
+          fi
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          VERSION="${RELEASE_TAG#v}"
+          gh release create "$RELEASE_TAG" \
+            "dist/dnsmgr_${VERSION}.zip" \
+            "dist/dnsmgr_${VERSION}.zip.sha256" \
+            --verify-tag \
+            --title "v${VERSION}" \
+            --generate-notes

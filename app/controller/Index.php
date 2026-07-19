@@ -7,6 +7,7 @@ use Exception;
 use think\facade\Db;
 use think\facade\View;
 use think\facade\Cache;
+use app\utils\UpdateUtils;
 
 class Index extends BaseController
 {
@@ -67,8 +68,39 @@ class Index extends BaseController
             'date' => date("Y-m-d H:i:s"),
         ];
         View::assign('info', $info);
-        View::assign('checkupdate', '//auth.cccyun.cc/app/dnsmgr.php?ver=' . config('app.version'));
         return view();
+    }
+
+    public function checkupdate()
+    {
+        try {
+            $cacheKey = 'dnsmgr_latest_release';
+            $release = Cache::get($cacheKey);
+            if (!is_array($release)) {
+                $response = get_curl(config('app.update_api'), 0, 0, 0, 0, 0, [
+                    'Accept' => 'application/vnd.github+json',
+                    'X-GitHub-Api-Version' => '2022-11-28',
+                ]);
+                $release = json_decode($response, true);
+                if (!is_array($release)) {
+                    throw new Exception('GitHub Release response is invalid');
+                }
+                Cache::set($cacheKey, $release, 600);
+            }
+
+            $result = UpdateUtils::parseRelease($release, config('app.fork_version'));
+            $result['code'] = 0;
+            $result['build'] = config('app.version');
+            $result['repository_url'] = config('app.repository_url');
+            return json($result);
+        } catch (\Throwable $e) {
+            return json([
+                'code' => -1,
+                'msg' => '暂时无法获取版本信息',
+                'current_version' => config('app.fork_version'),
+                'build' => config('app.version'),
+            ]);
+        }
     }
 
     private function db_update()
