@@ -195,15 +195,45 @@ $(document).ready(function(){
 				if ($(this).text().trim() === '0') {
 					$(this).css('opacity', '0.4');
 				}
-			});
+            });
             $.ajax({
-				url: '{$checkupdate}',
+				url: '/checkupdate',
 				type: 'get',
-				dataType: 'jsonp',
-				jsonpCallback: 'callback'
+				dataType: 'json'
 			}).done(function(data){
-				$("#checkupdate").html(data.msg);
-			})
+				var list = $("#checkupdate").empty();
+				$('<li>', {class: 'list-group-item'})
+					.text('当前版本：V' + data.current_version + ' (Build ' + data.build + ')')
+					.appendTo(list);
+				if (data.code !== 0) {
+					$('<li>', {class: 'list-group-item text-red'}).text(data.msg).appendTo(list);
+					return;
+				}
+				if (data.update_available) {
+					$('<li>', {class: 'list-group-item text-red'}).text('发现新版本').appendTo(list);
+					var link = $('<a>', {
+						href: data.download_url,
+						target: '_blank',
+						rel: 'noopener noreferrer'
+					}).text('最新版本：V' + data.latest_version + ' 点击下载更新');
+					$('<li>', {class: 'list-group-item'}).append(link).appendTo(list);
+				} else {
+					$('<li>', {class: 'list-group-item text-green'})
+						.text('已是最新版本：V' + data.latest_version)
+						.appendTo(list);
+				}
+				$('<li>', {class: 'list-group-item'}).append(
+					$('<a>', {
+						href: data.repository_url,
+						target: '_blank',
+						rel: 'noopener noreferrer',
+						text: '维护仓库'
+					})
+				).appendTo(list);
+			}).fail(function(){
+				var list = $("#checkupdate").empty();
+				$('<li>', {class: 'list-group-item text-red'}).text('暂时无法获取版本信息').appendTo(list);
+			});
         }
     })
 })
