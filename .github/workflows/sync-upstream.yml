@@ -1,0 +1,494 @@
+name: Sync upstream and releases
+
+on:
+  schedule:
+    - cron: '17 */6 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: sync-upstream-and-releases
+  cancel-in-progress: false
+
+env:
+  UPSTREAM_REPOSITORY: netcccyun/dnsmgr
+  FORK_REVISION: '1001'
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      release_tag: ${{ steps.release.outputs.release_tag }}
+      should_release: ${{ steps.release.outputs.should_release }}
+
+    steps:
+      - name: Checkout fork main
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Configure repositories
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git remote add upstream "https://github.com/${UPSTREAM_REPOSITORY}.git"
+          git fetch --no-tags --prune upstream \
+            '+refs/heads/main:refs/remotes/upstream/main'
+          git fetch --no-tags --prune origin \
+            '+refs/heads/stable/*:refs/remotes/origin/stable/*' \
+            '+refs/heads/patches/customizations:refs/remotes/origin/patches/customizations'
+
+      - name: Merge upstream main
+        id: main
+        shell: bash
+        run: |
+          set -euo pipefail
+          BEFORE="$(git rev-parse HEAD)"
+          BASE="$(git merge-base HEAD refs/remotes/upstream/main)"
+          SENSITIVE_CHANGES="$(
+            git diff --name-only "$BASE" refs/remotes/upstream/main -- \
+              '.github/workflows/**' '.github/actions/**'
+          )"
+          if [[ -n "$SENSITIVE_CHANGES" ]]; then
+            {
+              echo '### Manual workflow review required'
+              echo
+              echo 'The upstream update changes executable GitHub Actions files:'
+              echo '```text'
+              echo "$SENSITIVE_CHANGES"
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+
+          if ! git merge --no-edit refs/remotes/upstream/main; then
+            CONFLICTS="$(git diff --name-only --diff-filter=U || true)"
+            {
+              echo '### Upstream main merge conflict'
+              echo
+              echo '```text'
+              echo "${CONFLICTS:-No conflicted path was reported by Git.}"
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+            git merge --abort || true
+            exit 1
+          fi
+
+          AFTER="$(git rev-parse HEAD)"
+          if [[ "$BEFORE" == "$AFTER" ]]; then
+            echo 'changed=false' >> "$GITHUB_OUTPUT"
+          else
+            echo 'changed=true' >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@b604ade2a87db23f8871b7182e69ec5e75effb45 # v2
+        with:
+          php-version: '8.2'
+          extensions: curl, ftp, gd, mbstring, openssl, pdo, sockets, ssh2
+          tools: composer:v2
+          coverage: none
+
+      - name: Test merged main
+        if: steps.main.outputs.changed == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --check origin/main...HEAD
+          php tests/CertDnsUtilsCnameConflictTest.php
+          php tests/UpdateUtilsTest.php
+          find app config route tests -type f -name '*.php' -print0 \
+            | sort -z \
+            | xargs -0 -r -n 1 php -l > /dev/null
+
+      - name: Push tested main
+        if: steps.main.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASIC_AUTH="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w 0)"
+          git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic ${BASIC_AUTH}" \
+            push origin HEAD:refs/heads/main
+
+      - name: Prepare the next stable release
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            echo 'should_release=false'
+            echo 'release_tag='
+            echo 'needs_tag=false'
+            echo 'new_branch=false'
+          } >> "$GITHUB_OUTPUT"
+
+          RELEASE_TAGS="$(
+            gh api --paginate \
+              "repos/${UPSTREAM_REPOSITORY}/releases?per_page=100" \
+              --jq '.[] | select(.draft == false and .prerelease == false) | .tag_name'
+          )"
+          UPSTREAM_ROW="$(
+            while IFS= read -r TAG; do
+              if [[ "$TAG" =~ ^[vV]?[0-9]+(\.[0-9]+){1,2}$ ]]; then
+                NORMALIZED="${TAG#[vV]}"
+                printf '%s\t%s\n' "$NORMALIZED" "$TAG"
+              fi
+            done <<< "$RELEASE_TAGS" \
+              | LC_ALL=C sort -t $'\t' -k1,1V -k2,2 \
+              | tail -n 1
+          )"
+          if [[ -z "$UPSTREAM_ROW" ]]; then
+            echo 'No supported stable upstream release was found.' >&2
+            exit 1
+          fi
+          UPSTREAM_VERSION="${UPSTREAM_ROW%%$'\t'*}"
+          UPSTREAM_TAG="${UPSTREAM_ROW#*$'\t'}"
+
+          PREVIOUS_FORK_TAG="$(
+            gh api "repos/${GITHUB_REPOSITORY}/releases/latest" --jq .tag_name
+          )"
+          PREVIOUS_FORK_VERSION="${PREVIOUS_FORK_TAG#[vV]}"
+          if [[ ! "$PREVIOUS_FORK_VERSION" =~ ^[0-9]+(\.[0-9]+){2,3}$ ]]; then
+            echo "Latest fork release has an unsupported tag: $PREVIOUS_FORK_TAG" >&2
+            exit 1
+          fi
+          git fetch --force origin \
+            "+refs/tags/${PREVIOUS_FORK_TAG}:refs/tags/${PREVIOUS_FORK_TAG}"
+
+          PREVIOUS_UPSTREAM_TAG="$(
+            git show "${PREVIOUS_FORK_TAG}:.github/upstream-release" 2>/dev/null \
+              | tr -d '\r\n' || true
+          )"
+          if [[ -z "$PREVIOUS_UPSTREAM_TAG" ]]; then
+            if [[ "$PREVIOUS_FORK_VERSION" =~ ^([0-9]+(\.[0-9]+){1,2})\.${FORK_REVISION}$ ]]; then
+              PREVIOUS_UPSTREAM_TAG="${BASH_REMATCH[1]}"
+            else
+              echo 'The latest fork release does not identify its upstream base.' >&2
+              exit 1
+            fi
+          fi
+          PREVIOUS_UPSTREAM_VERSION="${PREVIOUS_UPSTREAM_TAG#[vV]}"
+          if [[ ! "$PREVIOUS_UPSTREAM_VERSION" =~ ^[0-9]+(\.[0-9]+){1,2}$ ]]; then
+            echo "Previous upstream tag is invalid: $PREVIOUS_UPSTREAM_TAG" >&2
+            exit 1
+          fi
+
+          COMPARISON="$(
+            php -r 'echo version_compare($argv[1], $argv[2]);' \
+              "$UPSTREAM_VERSION" "$PREVIOUS_UPSTREAM_VERSION"
+          )"
+          if [[ "$COMPARISON" == '0' ]]; then
+            echo "Upstream ${UPSTREAM_TAG} is already represented by ${PREVIOUS_FORK_TAG}." \
+              >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          if [[ "$COMPARISON" == '-1' ]]; then
+            echo "Ignoring upstream release ${UPSTREAM_TAG}; fork already tracks newer ${PREVIOUS_UPSTREAM_TAG}." \
+              >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$UPSTREAM_VERSION"
+          if [[ -z "${PATCH:-}" ]]; then
+            RELEASE_BASE="${MAJOR}.${MINOR}.0"
+          else
+            RELEASE_BASE="$UPSTREAM_VERSION"
+          fi
+          FORK_VERSION="${RELEASE_BASE}.${FORK_REVISION}"
+          FORK_TAG="$FORK_VERSION"
+          STABLE_BRANCH="stable/${UPSTREAM_VERSION}"
+
+          {
+            echo "FORK_TAG=${FORK_TAG}"
+            echo "FORK_VERSION=${FORK_VERSION}"
+            echo "STABLE_BRANCH=${STABLE_BRANCH}"
+            echo "UPSTREAM_TAG=${UPSTREAM_TAG}"
+            echo "UPSTREAM_VERSION=${UPSTREAM_VERSION}"
+          } >> "$GITHUB_ENV"
+          echo "release_tag=${FORK_TAG}" >> "$GITHUB_OUTPUT"
+
+          if gh api --silent \
+            "repos/${GITHUB_REPOSITORY}/releases/tags/${FORK_TAG}" \
+            >/dev/null 2>&1; then
+            echo "Fork release ${FORK_TAG} already exists." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          NEW_UPSTREAM_REF="refs/upstream/tags/${UPSTREAM_TAG}"
+          git fetch --force upstream \
+            "+refs/tags/${UPSTREAM_TAG}:${NEW_UPSTREAM_REF}"
+          git rev-parse --verify "${NEW_UPSTREAM_REF}^{commit}" >/dev/null
+
+          REMOTE_STABLE_REF="refs/remotes/origin/${STABLE_BRANCH}"
+          STABLE_EXISTS=false
+          if git show-ref --verify --quiet "$REMOTE_STABLE_REF"; then
+            STABLE_EXISTS=true
+          fi
+
+          TAG_EXISTS=false
+          if git ls-remote --exit-code --tags origin "refs/tags/${FORK_TAG}" >/dev/null 2>&1; then
+            TAG_EXISTS=true
+            git fetch --force origin "+refs/tags/${FORK_TAG}:refs/tags/${FORK_TAG}"
+          fi
+
+          if [[ "$TAG_EXISTS" == 'true' ]]; then
+            if [[ "$STABLE_EXISTS" != 'true' ]]; then
+              echo "Tag ${FORK_TAG} exists without ${STABLE_BRANCH}." >&2
+              exit 1
+            fi
+            if ! git merge-base --is-ancestor \
+              "${FORK_TAG}^{commit}" "${REMOTE_STABLE_REF}^{commit}"; then
+              echo "Tag ${FORK_TAG} is not contained in ${STABLE_BRANCH}." >&2
+              exit 1
+            fi
+            TAG_APP_VERSION="$(
+              git show "${FORK_TAG}:config/app.php" \
+                | sed -n "s/.*'fork_version'[[:space:]]*=>[[:space:]]*'\([^']*\)'.*/\1/p" \
+                | head -n 1
+            )"
+            TAG_UPSTREAM="$(
+              git show "${FORK_TAG}:.github/upstream-release" | tr -d '\r\n'
+            )"
+            if [[ "$TAG_APP_VERSION" != "$FORK_VERSION" || "$TAG_UPSTREAM" != "$UPSTREAM_TAG" ]]; then
+              echo "Existing tag ${FORK_TAG} has inconsistent release metadata." >&2
+              exit 1
+            fi
+            echo 'should_release=true' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [[ "$STABLE_EXISTS" == 'true' ]]; then
+            git checkout -B "$STABLE_BRANCH" "$REMOTE_STABLE_REF"
+            BRANCH_APP_VERSION="$(
+              sed -n "s/.*'fork_version'[[:space:]]*=>[[:space:]]*'\([^']*\)'.*/\1/p" \
+                config/app.php | head -n 1
+            )"
+            BRANCH_UPSTREAM="$(tr -d '\r\n' < .github/upstream-release)"
+            if [[ "$BRANCH_APP_VERSION" != "$FORK_VERSION" || "$BRANCH_UPSTREAM" != "$UPSTREAM_TAG" ]]; then
+              echo "Existing branch ${STABLE_BRANCH} has inconsistent release metadata." >&2
+              exit 1
+            fi
+            echo 'needs_tag=true' >> "$GITHUB_OUTPUT"
+            echo 'should_release=true' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          PATCH_REF='refs/remotes/origin/patches/customizations'
+          if ! git show-ref --verify --quiet "$PATCH_REF"; then
+            echo 'The patches/customizations branch was not found.' >&2
+            exit 1
+          fi
+          PATCH_BASE_TAG="$(
+            git show "${PATCH_REF}:.github/customizations-base" | tr -d '\r\n'
+          )"
+          PATCH_BASE_VERSION="${PATCH_BASE_TAG#[vV]}"
+          if [[ ! "$PATCH_BASE_VERSION" =~ ^[0-9]+(\.[0-9]+){1,2}$ ]]; then
+            echo "Customization base tag is invalid: $PATCH_BASE_TAG" >&2
+            exit 1
+          fi
+          PATCH_BASE_REF="refs/upstream/tags/${PATCH_BASE_TAG}"
+          git fetch --force upstream \
+            "+refs/tags/${PATCH_BASE_TAG}:${PATCH_BASE_REF}"
+          if ! git merge-base --is-ancestor \
+            "${PATCH_BASE_REF}^{commit}" "${PATCH_REF}^{commit}"; then
+            echo "patches/customizations is not based on ${PATCH_BASE_TAG}." >&2
+            exit 1
+          fi
+          if ! git merge-base --is-ancestor \
+            "${PATCH_BASE_REF}^{commit}" "${NEW_UPSTREAM_REF}^{commit}"; then
+            echo "Upstream ${UPSTREAM_TAG} is not descended from customization base ${PATCH_BASE_TAG}." >&2
+            exit 1
+          fi
+          if git rev-list --merges \
+            "${PATCH_BASE_REF}^{commit}..${PATCH_REF}^{commit}" \
+            | grep -q .; then
+            echo 'patches/customizations contains merge commits and cannot be replayed automatically.' >&2
+            exit 1
+          fi
+
+          PATCH_COUNT="$(
+            git rev-list --count "${PATCH_BASE_REF}^{commit}..${PATCH_REF}^{commit}"
+          )"
+          git checkout -b "$STABLE_BRANCH" "$PATCH_REF"
+          if ! git rebase --reapply-cherry-picks --empty=stop --onto \
+            "${NEW_UPSTREAM_REF}^{commit}" \
+            "${PATCH_BASE_REF}^{commit}"; then
+            CONFLICTS="$(git diff --name-only --diff-filter=U || true)"
+            CURRENT_PATCH="$(git rebase --show-current-patch 2>/dev/null | sed -n '1,12p' || true)"
+            {
+              echo '### Stable release replay conflict'
+              echo
+              echo "Upstream: ${UPSTREAM_TAG}"
+              echo
+              echo '```text'
+              echo "${CONFLICTS:-No conflicted path was reported by Git.}"
+              echo '```'
+              if [[ -n "$CURRENT_PATCH" ]]; then
+                echo
+                echo 'Current patch:'
+                echo '```text'
+                echo "$CURRENT_PATCH"
+                echo '```'
+              fi
+            } >> "$GITHUB_STEP_SUMMARY"
+            git rebase --abort || true
+            exit 1
+          fi
+
+          REPLAY_COUNT="$(git rev-list --count "${NEW_UPSTREAM_REF}^{commit}..HEAD")"
+          RANGE_DIFF="$(
+            git range-diff --no-color \
+              "${PATCH_BASE_REF}^{commit}..${PATCH_REF}^{commit}" \
+              "${NEW_UPSTREAM_REF}^{commit}..HEAD"
+          )"
+          EQUAL_COUNT="$(printf '%s\n' "$RANGE_DIFF" | grep -c ' = ' || true)"
+          if [[ "$REPLAY_COUNT" != "$PATCH_COUNT" || "$EQUAL_COUNT" != "$PATCH_COUNT" ]]; then
+            {
+              echo '### Customization replay changed patch semantics'
+              echo
+              echo '```text'
+              echo "$RANGE_DIFF"
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+
+          php -r '
+            $path = "config/app.php";
+            $content = file_get_contents($path);
+            $count = 0;
+            $content = preg_replace_callback(
+                "/(\x27fork_version\x27\s*=>\s*\x27)[^\x27]*(\x27)/",
+                static fn(array $match): string => $match[1] . $argv[1] . $match[2],
+                $content,
+                1,
+                $count
+            );
+            if ($content === null || $count !== 1) {
+                fwrite(STDERR, "Unable to update fork_version.\n");
+                exit(1);
+            }
+            file_put_contents($path, $content);
+          ' "$FORK_VERSION"
+          printf '%s\n' "$UPSTREAM_TAG" > .github/upstream-release
+
+          echo 'needs_tag=true' >> "$GITHUB_OUTPUT"
+          echo 'new_branch=true' >> "$GITHUB_OUTPUT"
+          echo 'should_release=true' >> "$GITHUB_OUTPUT"
+
+      - name: Test prepared stable release
+        if: steps.release.outputs.needs_tag == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --check
+          php tests/CertDnsUtilsCnameConflictTest.php
+          php tests/UpdateUtilsTest.php
+          find app config route tests -type f -name '*.php' -print0 \
+            | sort -z \
+            | xargs -0 -r -n 1 php -l > /dev/null
+          composer install --no-dev --prefer-dist --no-interaction --optimize-autoloader
+
+      - name: Commit and push stable release tag
+        if: steps.release.outputs.needs_tag == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NEW_BRANCH: ${{ steps.release.outputs.new_branch }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$NEW_BRANCH" == 'true' ]]; then
+            UNEXPECTED="$(
+              git diff --name-only \
+                | grep -Ev '^(config/app.php|\.github/upstream-release)$' || true
+            )"
+            if [[ -n "$UNEXPECTED" ]]; then
+              echo "Unexpected tracked changes after release tests:" >&2
+              echo "$UNEXPECTED" >&2
+              exit 1
+            fi
+            git add config/app.php .github/upstream-release
+            git diff --cached --check
+            git commit -m "chore: prepare fork release ${FORK_VERSION}"
+          elif ! git diff --quiet || ! git diff --cached --quiet; then
+            echo "Existing stable branch ${STABLE_BRANCH} has uncommitted changes." >&2
+            exit 1
+          fi
+
+          git tag -a "$FORK_TAG" -m "Fork release ${FORK_VERSION} based on upstream ${UPSTREAM_TAG}"
+          BASIC_AUTH="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w 0)"
+          git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic ${BASIC_AUTH}" \
+            push --atomic origin \
+              "HEAD:refs/heads/${STABLE_BRANCH}" \
+              "refs/tags/${FORK_TAG}"
+
+  release:
+    needs: sync
+    if: needs.sync.outputs.should_release == 'true'
+    permissions:
+      contents: write
+    uses: ./.github/workflows/release-package.yml
+    with:
+      tag: ${{ needs.sync.outputs.release_tag }}
+
+  status:
+    needs: [sync, release]
+    if: always()
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RELEASE_RESULT: ${{ needs.release.result }}
+      SYNC_RESULT: ${{ needs.sync.result }}
+
+    steps:
+      - name: Report or resolve automation failures
+        shell: bash
+        run: |
+          set -euo pipefail
+          ISSUE_TITLE='[sync] Automatic upstream sync needs attention'
+          ISSUE_NUMBER="$(
+            gh issue list \
+              --repo "$GITHUB_REPOSITORY" \
+              --state open \
+              --limit 100 \
+              --json number,title \
+              --jq '.[] | select(.title == "[sync] Automatic upstream sync needs attention") | .number' \
+              | head -n 1
+          )"
+          RUN_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+
+          if [[ "$SYNC_RESULT" == 'success' \
+            && ( "$RELEASE_RESULT" == 'success' || "$RELEASE_RESULT" == 'skipped' ) ]]; then
+            if [[ -n "$ISSUE_NUMBER" ]]; then
+              gh issue close "$ISSUE_NUMBER" \
+                --repo "$GITHUB_REPOSITORY" \
+                --reason completed \
+                --comment "Automation recovered successfully: ${RUN_URL}"
+            fi
+            exit 0
+          fi
+
+          printf -v BODY \
+            'Automatic upstream maintenance did not complete successfully.\n\n- Sync job: %s\n- Release job: %s\n- Run: %s\n\nNo conflicting branch or tag was force-updated. Review the run log and resolve the conflict or failed test before retrying.' \
+            "$SYNC_RESULT" "$RELEASE_RESULT" "$RUN_URL"
+          if [[ -n "$ISSUE_NUMBER" ]]; then
+            gh issue comment "$ISSUE_NUMBER" \
+              --repo "$GITHUB_REPOSITORY" \
+              --body "$BODY"
+          else
+            gh issue create \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "$ISSUE_TITLE" \
+              --body "$BODY"
+          fi
