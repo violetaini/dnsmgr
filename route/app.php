@@ -33,6 +33,7 @@ Route::get('/cron', 'system/cron');
 
 Route::group(function () {
     Route::any('/', 'index/index');
+    Route::get('/checkupdate', 'index/checkupdate');
     Route::post('/changeskin', 'index/changeskin');
     Route::get('/cleancache', 'index/cleancache');
     Route::any('/setpwd', 'index/setpwd');
