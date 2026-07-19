@@ -7,12 +7,22 @@ on:
         description: Stable release tag to package
         required: true
         type: string
+      publish_release:
+        description: Publish the verified package as a GitHub release
+        required: false
+        type: boolean
+        default: true
   workflow_dispatch:
     inputs:
       tag:
         description: Stable release tag to package
         required: true
         type: string
+      publish_release:
+        description: Publish the verified package as a GitHub release
+        required: false
+        type: boolean
+        default: true
 
 jobs:
   build:
@@ -141,6 +151,7 @@ jobs:
 
   publish:
     needs: build
+    if: inputs.publish_release
     runs-on: ubuntu-latest
     permissions:
       contents: write
