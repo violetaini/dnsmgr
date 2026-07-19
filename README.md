@@ -2,13 +2,15 @@
 
 <div align="center">
 
-[![GitHub stars](https://img.shields.io/github/stars/netcccyun/dnsmgr?style=flat)](https://github.com/netcccyun/dnsmgr/stargazers)
-[![GitHub forks](https://img.shields.io/github/forks/netcccyun/dnsmgr?style=flat)](https://github.com/netcccyun/dnsmgr/forks)
+[![GitHub stars](https://img.shields.io/github/stars/violetaini/dnsmgr?style=flat)](https://github.com/violetaini/dnsmgr/stargazers)
+[![GitHub forks](https://img.shields.io/github/forks/violetaini/dnsmgr?style=flat)](https://github.com/violetaini/dnsmgr/forks)
 [![Docker Pulls](https://img.shields.io/docker/pulls/netcccyun/dnsmgr?style=flat)](https://hub.docker.com/r/netcccyun/dnsmgr)
-[![GitHub release (latest by date)](https://img.shields.io/github/v/release/netcccyun/dnsmgr)](https://github.com/netcccyun/dnsmgr/releases)
-[![GitHub last commit](https://img.shields.io/github/last-commit/netcccyun/dnsmgr)](https://github.com/netcccyun/dnsmgr/commits/main)
+[![GitHub release (latest by date)](https://img.shields.io/github/v/release/violetaini/dnsmgr)](https://github.com/violetaini/dnsmgr/releases)
+[![GitHub last commit](https://img.shields.io/github/last-commit/violetaini/dnsmgr)](https://github.com/violetaini/dnsmgr/commits/main)
 
 </div>
+
+本仓库是基于 [netcccyun/dnsmgr](https://github.com/netcccyun/dnsmgr) 的自维护版本，保留上游完整历史并通过 `upstream` 持续同步。
 
 彩虹聚合DNS管理系统 是一款基于ThinkPHP开发的网站程序，可实现在单一网站内管理多个平台的域名解析，目前已支持的域名解析平台有：阿里云、腾讯云、华为云、百度云、西部数码、火山引擎、DNSLA、CloudFlare、Namesilo、PowerDNS
 
@@ -28,7 +30,7 @@
 
 可以使用宝塔、Kangle等任意支持PHP-MySQL的环境部署
 
-* 从[Release](https://github.com/netcccyun/dnsmgr/releases)页面下载安装包
+* 从[Release](https://github.com/violetaini/dnsmgr/releases)页面下载安装包
 
 * 运行环境要求PHP8.0+，MySQL5.6+
 
@@ -206,4 +208,3 @@ SSL证书自动部署功能
 
 - [彩虹云主机 - 免备案CDN/虚拟主机](https://www.cccyun.net/)
 - [小白云高防云服务器](https://www.xiaobaiyun.cn/aff/GMLPMFOV)
-
