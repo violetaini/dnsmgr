@@ -51,6 +51,14 @@ class CertDnsUtils
                 if (!isset($records[$row['name']])) $records[$row['name']] = $dns->getSubDomainRecords($row['name'], 1, 100);
                 if (!$records[$row['name']]) throw new Exception('获取'.$domain.'记录列表失败，'.$dns->getError());
 
+                $records[$row['name']]['list'] = self::removeCnameConflicts(
+                    $records[$row['name']]['list'],
+                    $row,
+                    $dns,
+                    $domain,
+                    $log
+                );
+
                 $filter_records = array_filter($records[$row['name']]['list'], function ($v) use ($row) {
                     if (is_array($v['Value'])) $v['Value'] = implode(',', $v['Value']);
                     return $v['Type'] == $row['type'] && ($v['Value'] == $row['value'] || rtrim($v['Value'], '.') == $row['value']);
@@ -98,6 +106,40 @@ class CertDnsUtils
             $list[] = ['name' => $name, 'type' => 'TXT', 'value' => '"' . implode('","', $rows) . '"'];
         }
         return $list;
+    }
+
+    private static function removeCnameConflicts(array $records, array $row, $dns, string $domain, callable $log): array
+    {
+        $recordName = strtolower(rtrim((string)$row['name'], '.'));
+        $desiredType = strtoupper((string)$row['type']);
+        if (($recordName != '_acme-challenge' && strpos($recordName, '_acme-challenge.') !== 0) ||
+            $desiredType != 'TXT') {
+            return $records;
+        }
+
+        foreach ($records as $key => $record) {
+            if (!isset($record['Name'], $record['Type'], $record['RecordId'])) {
+                continue;
+            }
+            $existingType = strtoupper((string)$record['Type']);
+            if ($existingType != 'CNAME') {
+                continue;
+            }
+
+            $existingName = strtolower(rtrim((string)$record['Name'], '.'));
+            $fullName = strtolower(rtrim($domain, '.'));
+            if ($existingName != $recordName && $existingName != $fullName) {
+                continue;
+            }
+
+            if ($dns->deleteDomainRecord($record['RecordId']) === false) {
+                throw new Exception('删除'.$domain.'冲突的'.$existingType.'解析记录失败，'.$dns->getError());
+            }
+            unset($records[$key]);
+            $log('Delete conflicting DNS Record: '.$domain.' '.$existingType);
+        }
+
+        return $records;
     }
 
     public static function delDns($dnsList, callable $log, $cname = false)
