@@ -464,17 +464,19 @@ jobs:
               --limit 100 \
               --json number,title \
               --jq '.[] | select(.title == "[sync] Automatic upstream sync needs attention") | .number' \
-              | head -n 1
+              | head -n 1 || true
           )"
           RUN_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
 
           if [[ "$SYNC_RESULT" == 'success' \
             && ( "$RELEASE_RESULT" == 'success' || "$RELEASE_RESULT" == 'skipped' ) ]]; then
             if [[ -n "$ISSUE_NUMBER" ]]; then
-              gh issue close "$ISSUE_NUMBER" \
-                --repo "$GITHUB_REPOSITORY" \
-                --reason completed \
-                --comment "Automation recovered successfully: ${RUN_URL}"
+              if ! gh issue close "$ISSUE_NUMBER" \
+                  --repo "$GITHUB_REPOSITORY" \
+                  --reason completed \
+                  --comment "Automation recovered successfully: ${RUN_URL}"; then
+                echo '::warning::Unable to close the resolved sync issue.'
+              fi
             fi
             exit 0
           fi
@@ -483,12 +485,16 @@ jobs:
             'Automatic upstream maintenance did not complete successfully.\n\n- Sync job: %s\n- Release job: %s\n- Run: %s\n\nNo conflicting branch or tag was force-updated. Review the run log and resolve the conflict or failed test before retrying.' \
             "$SYNC_RESULT" "$RELEASE_RESULT" "$RUN_URL"
           if [[ -n "$ISSUE_NUMBER" ]]; then
-            gh issue comment "$ISSUE_NUMBER" \
-              --repo "$GITHUB_REPOSITORY" \
-              --body "$BODY"
+            if ! gh issue comment "$ISSUE_NUMBER" \
+                --repo "$GITHUB_REPOSITORY" \
+                --body "$BODY"; then
+              echo '::warning::Unable to update the sync issue.'
+            fi
           else
-            gh issue create \
-              --repo "$GITHUB_REPOSITORY" \
-              --title "$ISSUE_TITLE" \
-              --body "$BODY"
+            if ! gh issue create \
+                --repo "$GITHUB_REPOSITORY" \
+                --title "$ISSUE_TITLE" \
+                --body "$BODY"; then
+              echo '::warning::Unable to create a sync issue.'
+            fi
           fi
