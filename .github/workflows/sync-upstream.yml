@@ -99,7 +99,29 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          git diff --check origin/main...HEAD
+          php -r '
+            $checks = [
+              "config/app.php" => ["fork_version", "update_api", "repository_url"],
+              "route/app.php" => ["/checkupdate"],
+              "app/controller/Index.php" => ["UpdateUtils", "checkupdate"],
+              "app/view/index/index.html" => ["/checkupdate", "current_version"],
+              "app/utils/CertDnsUtils.php" => ["removeCnameConflicts"],
+            ];
+            foreach ($checks as $file => $needles) {
+              $content = @file_get_contents($file);
+              if ($content === false) {
+                fwrite(STDERR, "Missing custom file: $file\n");
+                exit(1);
+              }
+              foreach ($needles as $needle) {
+                if (strpos($content, $needle) === false) {
+                  fwrite(STDERR, "Customization overwritten in $file: missing $needle\n");
+                  exit(1);
+                }
+              }
+            }
+            echo "Fork customizations integrity verified.\n";
+          '
           php tests/CertDnsUtilsCnameConflictTest.php
           php tests/UpdateUtilsTest.php
           find app config route tests -type f -name '*.php' -print0 \
@@ -391,6 +413,29 @@ jobs:
         run: |
           set -euo pipefail
           git diff --check
+          php -r '
+            $checks = [
+              "config/app.php" => ["fork_version", "update_api", "repository_url"],
+              "route/app.php" => ["/checkupdate"],
+              "app/controller/Index.php" => ["UpdateUtils", "checkupdate"],
+              "app/view/index/index.html" => ["/checkupdate", "current_version"],
+              "app/utils/CertDnsUtils.php" => ["removeCnameConflicts"],
+            ];
+            foreach ($checks as $file => $needles) {
+              $content = @file_get_contents($file);
+              if ($content === false) {
+                fwrite(STDERR, "Missing custom file: $file\n");
+                exit(1);
+              }
+              foreach ($needles as $needle) {
+                if (strpos($content, $needle) === false) {
+                  fwrite(STDERR, "Customization overwritten in $file: missing $needle\n");
+                  exit(1);
+                }
+              }
+            }
+            echo "Fork customizations integrity verified.\n";
+          '
           php tests/CertDnsUtilsCnameConflictTest.php
           php tests/UpdateUtilsTest.php
           find app config route tests -type f -name '*.php' -print0 \
