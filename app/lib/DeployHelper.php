@@ -2993,6 +2993,7 @@ ctrl+x 保存退出<br/>',
         $class = "\\app\\lib\\deploy\\{$type}";
         if (class_exists($class)) {
             $config = json_decode($account['config'], true);
+            if (!is_array($config)) $config = [];
             $model = new $class($config);
             return $model;
         }

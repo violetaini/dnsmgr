@@ -851,9 +851,8 @@ class DnsHelper
         'spaceship' => ['DEF' => 'default'],
         'aliyunesa' => ['DEF' => '0'],
         'tencenteo' => ['DEF' => 'Default'],
-        'cccyun' => ['DEF' => 'default'],
+        'dnsmgr' => ['DEF' => 'default'],
         'goedge' => ['DEF' => 'default'],
-        'dynv6' => ['DEF' => 'default'],
     ];
 
     public static function getList()
@@ -879,6 +878,7 @@ class DnsHelper
         $class = "\\app\\lib\\dns\\{$dnstype}";
         if (class_exists($class)) {
             $config = json_decode($account['config'] ?? '', true);
+            if (!is_array($config)) $config = [];
             $config['domain'] = $domain;
             $config['domainid'] = $domainid;
             $model = new $class($config);
@@ -896,6 +896,7 @@ class DnsHelper
         $class = "\\app\\lib\\dns\\{$dnstype}";
         if (class_exists($class)) {
             $config = json_decode($account['config'] ?? '', true);
+            if (!is_array($config)) $config = [];
             $config['domain'] = $account['name'];
             $config['domainid'] = $account['thirdid'];
             $model = new $class($config);
