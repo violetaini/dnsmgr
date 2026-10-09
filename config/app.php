@@ -33,7 +33,7 @@ return [
 
     'version' => '1052',
 
-    'fork_version' => '2.18.1001',
+    'fork_version' => '2.21.0.1001',
 
     'update_api' => 'https://api.github.com/repos/violetaini/dnsmgr/releases/latest',
 
