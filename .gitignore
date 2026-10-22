@@ -3,6 +3,8 @@
 /vendor
 *.log
 .env
+.sso.json
+.sso-required
 .ace-tool/
 /.codex-tmp/dns-panel-ref/
 /runtime
