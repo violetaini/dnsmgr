@@ -102,6 +102,7 @@ jobs:
           php tests/CertDnsUtilsCnameConflictTest.php
           php tests/UpdateUtilsTest.php
           php tests/SsoBridgeTest.php
+          php tests/DatahubCertificateTest.php
           find app config route tests -type f -name '*.php' -print0 \
             | sort -z \
             | xargs -0 -r -n 1 php -l > /dev/null
@@ -116,7 +117,7 @@ jobs:
           VERSION="${RELEASE_TAG#v}"
           mkdir -p dist
           zip -q -r "dist/dnsmgr_${VERSION}.zip" . \
-            -x '.git/*' '.github/*' 'tests/*' 'dist/*' '.env' '.sso.json' '.sso-required'
+            -x '.git/*' '.github/*' 'tests/*' 'dist/*' '.env' '.sso.json' '.sso-required' 'config/datahub-certificate-scopes.json'
           (
             cd dist
             sha256sum "dnsmgr_${VERSION}.zip" > "dnsmgr_${VERSION}.zip.sha256"
@@ -135,7 +136,10 @@ jobs:
           unzip -tq "$PACKAGE"
           zipinfo -1 "$PACKAGE" | grep -qx 'app/utils/CertDnsUtils.php'
           zipinfo -1 "$PACKAGE" | grep -qx 'vendor/autoload.php'
-          if zipinfo -1 "$PACKAGE" | grep -Eq '^(\.git|\.github|tests|dist)/|^\.env$'; then
+          for FILE in app/controller/Auth.php app/controller/Sso.php app/controller/DatahubCertificate.php app/lib/SsoBridge.php app/view/auth/sso.html public/static/js/sso-bridge.js public/static/css/sso.css; do
+            zipinfo -1 "$PACKAGE" | grep -qx "$FILE"
+          done
+          if zipinfo -1 "$PACKAGE" | grep -Eq '^(\.git|\.github|tests|dist)/|^\.(env|sso\.json|sso-required)$|^config/datahub-certificate-scopes\.json$'; then
             echo 'Installation package contains excluded files' >&2
             exit 1
           fi
