@@ -11,6 +11,7 @@ class Auth extends BaseController
 
     public function login()
     {
+        if (\app\lib\SsoBridge::configured()) return (new \app\lib\SsoBridge())->login($this->request);
         $login_limit_count = 5; //登录失败次数
         $login_limit_file = app()->getRuntimePath() . '@login.lock';
 
@@ -77,6 +78,7 @@ class Auth extends BaseController
 
     public function totp()
     {
+        if (\app\lib\SsoBridge::configured()) return json(['code'=>-1,'msg'=>'请在统一账号中心验证身份'])->code(410);
         $uid = session('pre_login_user');
         if (empty($uid)) return json(['code' => -1, 'msg' => '请重新登录']);
         $code = input('post.code');
@@ -99,12 +101,14 @@ class Auth extends BaseController
 
     public function logout()
     {
+        if (\app\lib\SsoBridge::configured()) return (new \app\lib\SsoBridge())->logout($this->request);
         cookie('user_token', null);
         return redirect('/login');
     }
 
     public function quicklogin()
     {
+        if (\app\lib\SsoBridge::configured()) return json(['code'=>-1,'msg'=>'请使用统一账号登录'])->code(410);
         $domain = input('get.domain', null, 'trim');
         $timestamp = input('get.timestamp', null, 'trim');
         $token = input('get.token', null, 'trim');
@@ -154,6 +158,7 @@ class Auth extends BaseController
 
     public function verifycode()
     {
+        if (\app\lib\SsoBridge::configured()) return response('Not found',410);
         return captcha();
     }
 }

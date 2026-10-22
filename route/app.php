@@ -25,7 +25,10 @@ Route::any('/login', 'auth/login')->middleware(SessionInit::class)
 ->middleware(ViewOutput::class);
 Route::get('/verifycode', 'auth/verifycode')->middleware(SessionInit::class);
 Route::post('/auth/totp', 'auth/totp')->middleware(SessionInit::class);
-Route::get('/logout', 'auth/logout');
+Route::get('/sso/start', 'sso/start');
+Route::get('/sso/callback', 'sso/callback');
+Route::get('/sso/account', 'sso/account');
+Route::any('/logout', 'auth/logout');
 Route::any('/quicklogin', 'auth/quicklogin');
 Route::any('/dmtask/status', 'dmonitor/status');
 Route::any('/optimizeip/status', 'optimizeip/status');

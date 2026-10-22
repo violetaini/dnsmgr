@@ -173,6 +173,7 @@ class Index extends BaseController
 
     public function setpwd()
     {
+        if (\app\lib\SsoBridge::configured()) return (new \app\lib\SsoBridge())->account($this->request);
         if (!checkPermission(1)) return $this->alert('error', '无权限');
         if ($this->request->isPost()) {
             $oldpwd = input('post.oldpwd');
@@ -196,6 +197,7 @@ class Index extends BaseController
 
     public function totp()
     {
+        if (\app\lib\SsoBridge::configured()) return (new \app\lib\SsoBridge())->account($this->request);
         if (!checkPermission(1)) return $this->alert('error', '无权限');
         $action = input('param.action');
         if ($action == 'generate') {
