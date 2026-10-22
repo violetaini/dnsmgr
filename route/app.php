@@ -198,6 +198,8 @@ Route::group('api', function () {
     Route::post('/record/batch/:id', 'domain/record_batch');
 
     Route::post('/cert/order', 'cert/order_info');
+    Route::post('/cert/datahub/order', 'datahubCertificate/order');
+    Route::post('/cert/datahub/list', 'datahubCertificate/catalog');
 
 })->middleware(AuthApi::class);
 
