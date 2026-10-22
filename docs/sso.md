@@ -31,6 +31,6 @@
 
 ## 升级与恢复
 
-从本 fork 的正式 Release 升级，保留 `.sso.json` 和 `.sso-required`。SSO 适配器、AuthUser 接入点及回归测试同时维护在 `patches/customizations`；上游同步及稳定包构建检查该接入点，冲突或测试失败时停止。
+从包含此 SSO 补丁的本 fork 正式 Release 升级，保留 `.sso.json` 和 `.sso-required`。旧 `2.21.0.1001` 安装包尚未包含本次补丁，不能用于覆盖已启用 SSO 的网站。SSO 适配器、AuthUser 接入点及回归测试同时维护在 `patches/customizations`；上游同步及稳定包构建检查该接入点，冲突或测试失败时停止。
 
 不要直接使用原上游覆盖包：它不包含此接入点，可能恢复原登录。升级前备份数据库、配置与网站代码；升级后运行 `php tests/SsoBridgeTest.php` 并核验公开登录及签名 API。身份服务与本机代理独立部署，第三方更新无需接触它们的私钥或客户端密钥。回滚需由服务器管理员显式恢复备份，不提供网页免认证应急入口。
