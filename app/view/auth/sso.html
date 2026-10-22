@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>{$ssoTitle} · DNS 管理系统</title>
+  <link rel="stylesheet" href="/static/css/sso.css?v=1">
+</head>
+<body>
+  <main>
+    <svg class="brand" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M12 3 3 7.5 12 12l9-4.5L12 3ZM3 12l9 4.5 9-4.5M3 16.5l9 4.5 9-4.5"/></svg>
+    <div class="eyebrow">CHITANDA · DNS</div>
+    <h1>{$ssoTitle}</h1>
+    <p>{$ssoMessage}</p>
+    {if $ssoLogoutCsrf neq ''}
+    <form method="post" action="/logout">
+      <input type="hidden" name="_sso_csrf" value="{$ssoLogoutCsrf}">
+      <button type="submit">确认退出</button>
+    </form>
+    {else/}
+    <a class="action" href="/sso/start">Chitanda 统一登录 <span aria-hidden="true">→</span></a>
+    {/if}
+  </main>
+</body>
+</html>
