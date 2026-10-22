@@ -5,6 +5,7 @@
 .env
 .sso.json
 .sso-required
+/config/datahub-certificate-scopes.json
 .ace-tool/
 /.codex-tmp/dns-panel-ref/
 /runtime
