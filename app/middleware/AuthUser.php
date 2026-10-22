@@ -10,6 +10,9 @@ class AuthUser
 {
     public function handle($request, \Closure $next)
     {
+        if (\app\lib\SsoBridge::configured()) {
+            return (new \app\lib\SsoBridge())->handle($request, $next);
+        }
         $islogin = false;
         $cookie = cookie('user_token');
         $user = null;

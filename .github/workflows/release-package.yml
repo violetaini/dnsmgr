@@ -101,6 +101,7 @@ jobs:
           set -euo pipefail
           php tests/CertDnsUtilsCnameConflictTest.php
           php tests/UpdateUtilsTest.php
+          php tests/SsoBridgeTest.php
           find app config route tests -type f -name '*.php' -print0 \
             | sort -z \
             | xargs -0 -r -n 1 php -l > /dev/null
@@ -115,7 +116,7 @@ jobs:
           VERSION="${RELEASE_TAG#v}"
           mkdir -p dist
           zip -q -r "dist/dnsmgr_${VERSION}.zip" . \
-            -x '.git/*' '.github/*' 'tests/*' 'dist/*' '.env'
+            -x '.git/*' '.github/*' 'tests/*' 'dist/*' '.env' '.sso.json' '.sso-required'
           (
             cd dist
             sha256sum "dnsmgr_${VERSION}.zip" > "dnsmgr_${VERSION}.zip.sha256"
