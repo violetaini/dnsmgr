@@ -106,6 +106,8 @@ jobs:
               "app/controller/Index.php" => ["UpdateUtils", "checkupdate"],
               "app/view/index/index.html" => ["/checkupdate", "current_version"],
               "app/utils/CertDnsUtils.php" => ["removeCnameConflicts"],
+              "app/middleware/AuthUser.php" => ["SsoBridge::configured"],
+              "app/lib/SsoBridge.php" => ["mappedUserId", "machinePath"],
             ];
             foreach ($checks as $file => $needles) {
               $content = @file_get_contents($file);
@@ -124,6 +126,7 @@ jobs:
           '
           php tests/CertDnsUtilsCnameConflictTest.php
           php tests/UpdateUtilsTest.php
+          php tests/SsoBridgeTest.php
           find app config route tests -type f -name '*.php' -print0 \
             | sort -z \
             | xargs -0 -r -n 1 php -l > /dev/null
@@ -420,6 +423,8 @@ jobs:
               "app/controller/Index.php" => ["UpdateUtils", "checkupdate"],
               "app/view/index/index.html" => ["/checkupdate", "current_version"],
               "app/utils/CertDnsUtils.php" => ["removeCnameConflicts"],
+              "app/middleware/AuthUser.php" => ["SsoBridge::configured"],
+              "app/lib/SsoBridge.php" => ["mappedUserId", "machinePath"],
             ];
             foreach ($checks as $file => $needles) {
               $content = @file_get_contents($file);
@@ -438,6 +443,7 @@ jobs:
           '
           php tests/CertDnsUtilsCnameConflictTest.php
           php tests/UpdateUtilsTest.php
+          php tests/SsoBridgeTest.php
           find app config route tests -type f -name '*.php' -print0 \
             | sort -z \
             | xargs -0 -r -n 1 php -l > /dev/null
