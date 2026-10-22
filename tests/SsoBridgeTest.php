@@ -25,9 +25,12 @@ class FakeResponse {
 function response($body='', $status=200) { return new FakeResponse($body,$status); }
 function json($body) { return response(json_encode($body)); }
 function redirect($url) { return response('',302)->header(['Location'=>$url]); }
+function view($template,$vars) { return response(json_encode(['template'=>$template]+$vars)); }
 class FakeRequest {
     public bool $islogin=false;
     public $user=null;
+    public bool $ssoEnabled=false;
+    public string $ssoCsrfToken='';
     public function __construct(public string $path, public string $verb='GET',public array $headers=[],public array $query=[]) {}
     public function pathinfo() { return $this->path; }
     public function method() { return $this->verb; }
@@ -59,20 +62,24 @@ foreach(['/api','/api-evil','/api/../user','/user'] as $p) {
     same(false,\app\lib\SsoBridge::machinePath($p),'API prefix boundary');
 }
 foreach(['/quicklogin','/install','/auth/totp','/verifycode'] as $p) same(410,(new Bridge())->handle(new FakeRequest($p),$next)->status,'Legacy login must be disabled');
-same(410,(new Bridge())->handle(new FakeRequest('/login','POST'),$next)->status,'Password POST disabled');
-$b=new Bridge();$r=$b->handle(new FakeRequest('/login'),$next);same(200,$r->status,'Login page');same(true,str_contains($r->body,'Chitanda 统一登录'),'SSO link visible');
-$r=(new Bridge())->handle(new FakeRequest('/sso/start'),$next);same('https://identity.example.com/oauth/authorize',$r->headers['Location'],'OIDC start');
-$r=(new Bridge())->handle(new FakeRequest('/sso/callback','POST'),$next);same(405,$r->status,'Callback GET only');
+same(410,(new Bridge())->login(new FakeRequest('/login','POST'))->status,'Password POST disabled');
+$b=new Bridge();$r=$b->login(new FakeRequest('/login'));same(302,$r->status,'Login automatically redirects');same('https://identity.example.com/oauth/authorize',$r->headers['Location'],'No intermediate login button');
+$r=(new Bridge())->start(new FakeRequest('/sso/start'));same('https://identity.example.com/oauth/authorize',$r->headers['Location'],'OIDC start');
+$r=(new Bridge())->callback(new FakeRequest('/sso/callback','POST'));same(405,$r->status,'Callback GET only');
+$b=new Bridge();$r=$b->login(new FakeRequest('/login','GET',[],['loggedout'=>'1']));same(200,$r->status,'Logout landing never automatically signs in');same([],$b->ops,'No OAuth restart after logout');same('auth/sso',json_decode($r->body,true)['template'],'Native template renders logout landing');
+$r=(new Bridge())->callback(new FakeRequest('/sso/callback','GET',[],['loggedout'=>'1']));same('/login?loggedout=1',$r->headers['Location'],'Logout callback preserves signed-out state');
+foreach(['/login','/sso/start','/sso/callback'] as $p){$b=new Bridge();$b->handle(new FakeRequest($p),$next);same([],$b->ops,'Native controller handles public auth route');}
 $b=new Bridge();$b->failure=401;$r=$b->handle(new FakeRequest('/user'),$next);same('/login',$r->headers['Location'],'Invalid session redirects');
 $r=$b->handle(new FakeRequest('/user/op','POST'),$next);same(401,$r->status,'Writes never redirect or fall back');
 $b=new Bridge();$b->failure=503;same(503,$b->handle(new FakeRequest('/'),$next)->status,'Identity outage fails closed');
 $b=new Bridge();$b->subject='other';same(403,$b->handle(new FakeRequest('/'),$next)->status,'No automatic username mapping');
 \think\facade\Db::$user['status']=0;same(403,(new Bridge())->handle(new FakeRequest('/'),$next)->status,'Disabled local users stay disabled');\think\facade\Db::$user['status']=1;
-$req=new FakeRequest('/');$r=(new Bridge())->handle($req,$next);same(true,$req->islogin,'Verified identity');same(['example.com'],$req->user['permission'],'Existing domain permissions');same(true,str_contains($r->body,'/static/js/sso-bridge.js'),'Browser CSRF adapter injected');
+$req=new FakeRequest('/');$r=(new Bridge())->handle($req,$next);same(true,$req->islogin,'Verified identity');same(['example.com'],$req->user['permission'],'Existing domain permissions');same('csrf',$req->ssoCsrfToken,'CSRF passed directly to native template');same('<html><head></head><body>DNS</body></html>',$r->body,'Middleware does not rewrite rendered HTML');
 same(400,(new Bridge())->handle(new FakeRequest('/','GET',['host'=>'evil.example']),$next)->status,'Host mismatch');
 same(403,(new Bridge())->handle(new FakeRequest('/cleancache','GET',['sec-fetch-site'=>'cross-site']),$next)->status,'Cross-site stateful GET blocked');
-$r=(new Bridge())->handle(new FakeRequest('/logout'),$next);same(200,$r->status,'Logout GET confirmation');same(true,str_contains($r->body,'method="post"'),'Logout requires POST');same('same-origin',$r->headers['Referrer-Policy'],'Form Origin must not become null in Chromium');
-$r=(new Bridge())->handle(new FakeRequest('/setpwd'),$next);same('https://identity.example.com/portal',$r->headers['Location'],'Passwords managed centrally');
+$req=new FakeRequest('/logout');$req->ssoCsrfToken='csrf';$r=(new Bridge())->logout($req);same(200,$r->status,'Legacy GET logout confirmation');same('csrf',json_decode($r->body,true)['ssoLogoutCsrf'],'Confirmation receives current CSRF');same('same-origin',$r->headers['Referrer-Policy'],'Form Origin must not become null in Chromium');
+$r=(new Bridge())->account(new FakeRequest('/sso/account'));same('https://identity.example.com/portal',$r->headers['Location'],'Passwords managed centrally');
+$r=(new Bridge())->account(new FakeRequest('/setpwd','POST'));same(410,$r->status,'Native password writes disabled');
 foreach([['subject'=>'subject-A','roles'=>[]],['subject'=>'other','roles'=>['root']]] as $profile) {try{\app\lib\SsoBridge::mappedUserId($profile,['subject-A'=>7]);throw new \Exception('Unexpected grant');}catch(\RuntimeException $e){same(403,$e->getCode(),'Explicit binding and role required');}}
 echo "SsoBridge: $count assertions passed\n";
 }

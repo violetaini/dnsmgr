@@ -102,12 +102,15 @@ jobs:
           php -r '
             $checks = [
               "config/app.php" => ["fork_version", "update_api", "repository_url"],
-              "route/app.php" => ["/checkupdate"],
+              "route/app.php" => ["/checkupdate", "/sso/callback"],
               "app/controller/Index.php" => ["UpdateUtils", "checkupdate"],
               "app/view/index/index.html" => ["/checkupdate", "current_version"],
               "app/utils/CertDnsUtils.php" => ["removeCnameConflicts"],
               "app/middleware/AuthUser.php" => ["SsoBridge::configured"],
               "app/lib/SsoBridge.php" => ["mappedUserId", "machinePath"],
+              "app/controller/Auth.php" => ["SsoBridge"],
+              "app/controller/Sso.php" => ["SsoBridge"],
+              "app/view/common/layout.html" => ["ssoEnabled", "ssoCsrfToken"],
             ];
             foreach ($checks as $file => $needles) {
               $content = @file_get_contents($file);
@@ -419,12 +422,15 @@ jobs:
           php -r '
             $checks = [
               "config/app.php" => ["fork_version", "update_api", "repository_url"],
-              "route/app.php" => ["/checkupdate"],
+              "route/app.php" => ["/checkupdate", "/sso/callback"],
               "app/controller/Index.php" => ["UpdateUtils", "checkupdate"],
               "app/view/index/index.html" => ["/checkupdate", "current_version"],
               "app/utils/CertDnsUtils.php" => ["removeCnameConflicts"],
               "app/middleware/AuthUser.php" => ["SsoBridge::configured"],
               "app/lib/SsoBridge.php" => ["mappedUserId", "machinePath"],
+              "app/controller/Auth.php" => ["SsoBridge"],
+              "app/controller/Sso.php" => ["SsoBridge"],
+              "app/view/common/layout.html" => ["ssoEnabled", "ssoCsrfToken"],
             ];
             foreach ($checks as $file => $needles) {
               $content = @file_get_contents($file);

@@ -20,6 +20,8 @@ class ViewOutput
         View::assign('islogin', $request->islogin);
         View::assign('user', $request->user);
         View::assign('skin', getAdminSkin());
+        View::assign('ssoEnabled', \app\lib\SsoBridge::configured());
+        View::assign('ssoCsrfToken', $request->ssoCsrfToken ?? '');
         return $next($request);
     }
 }
