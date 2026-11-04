@@ -140,12 +140,53 @@ class huawei implements DnsInterface
     //添加解析记录
     public function addDomainRecord($Name, $Type, $Value, $Line = '0', $TTL = 600, $MX = 1, $Weight = null, $Remark = null)
     {
+        $rawName = $Name;
         $Name = $this->getHost($Name);
         if ($Type == 'TXT' && substr($Value, 0, 1) != '"') $Value = '"' . $Value . '"';
         $records = array_reverse(explode(',', $Value));
         $params = ['name' => $Name, 'type' => $this->convertType($Type), 'records' => $records, 'line' => $Line, 'ttl' => intval($TTL), 'description' => $Remark];
         if ($Weight > 0) $params['weight'] = intval($Weight);
         $data = $this->send_request('POST', '/v2.1/zones/'.$this->domainid.'/recordsets', null, $params);
+        if (!$data && !empty($this->error)) {
+            // 自动处理冲突与覆盖：
+            // 1. 添加 CNAME 与已有 TXT 冲突（如 DCV 委派），删除同名旧 TXT 后重试
+            // 2. 添加 TXT 与已有 CNAME 冲突，删除同名旧 CNAME 后重试
+            // 3. 同名同类型记录已存在（already exists），清理旧记录后重试覆盖
+            if ($Type == 'CNAME' && (stripos($this->error, "type 'TXT'") !== false || stripos($this->error, "Conflicts with Record Set") !== false)) {
+                $conflictRecords = $this->getSubDomainRecords($rawName, 1, 50, 'TXT');
+                if ($conflictRecords && !empty($conflictRecords['list'])) {
+                    foreach ($conflictRecords['list'] as $conflict) {
+                        if ($conflict['Type'] == 'TXT') {
+                            $this->deleteDomainRecord($conflict['RecordId']);
+                        }
+                    }
+                    $this->error = null;
+                    $data = $this->send_request('POST', '/v2.1/zones/'.$this->domainid.'/recordsets', null, $params);
+                }
+            } elseif ($Type == 'TXT' && (stripos($this->error, "type 'CNAME'") !== false || stripos($this->error, "Conflicts with Record Set") !== false)) {
+                $conflictRecords = $this->getSubDomainRecords($rawName, 1, 50, 'CNAME');
+                if ($conflictRecords && !empty($conflictRecords['list'])) {
+                    foreach ($conflictRecords['list'] as $conflict) {
+                        if ($conflict['Type'] == 'CNAME') {
+                            $this->deleteDomainRecord($conflict['RecordId']);
+                        }
+                    }
+                    $this->error = null;
+                    $data = $this->send_request('POST', '/v2.1/zones/'.$this->domainid.'/recordsets', null, $params);
+                }
+            } elseif (stripos($this->error, "already exists") !== false) {
+                $existingRecords = $this->getSubDomainRecords($rawName, 1, 50, $Type);
+                if ($existingRecords && !empty($existingRecords['list'])) {
+                    foreach ($existingRecords['list'] as $existing) {
+                        if ($existing['Type'] == $Type) {
+                            $this->deleteDomainRecord($existing['RecordId']);
+                        }
+                    }
+                    $this->error = null;
+                    $data = $this->send_request('POST', '/v2.1/zones/'.$this->domainid.'/recordsets', null, $params);
+                }
+            }
+        }
         return is_array($data) ? $data['id'] : false;
     }
 
