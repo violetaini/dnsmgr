@@ -103,6 +103,7 @@ jobs:
           php tests/UpdateUtilsTest.php
           php tests/SsoBridgeTest.php
           php tests/DatahubCertificateTest.php
+          php tests/DnsRecordConflictOverrideTest.php
           find app config route tests -type f -name '*.php' -print0 \
             | sort -z \
             | xargs -0 -r -n 1 php -l > /dev/null
