@@ -177,6 +177,21 @@ class cloudflare implements DnsInterface
             $param['data'] = $this->convertValue($Value, $Type);
         }
         $data = $this->send_reuqest('POST', '/zones/'.$this->domainid.'/dns_records', $param);
+        if (!$data && !empty($this->error)) {
+            // 自动处理冲突与覆盖：添加 CNAME 时如果已有 TXT 冲突，自动清理旧 TXT 并重试
+            if ($Type == 'CNAME' && (stripos($this->error, "already exists") !== false || stripos($this->error, "record with that host") !== false)) {
+                $conflictRecords = $this->getSubDomainRecords($Name, 1, 50, 'TXT');
+                if ($conflictRecords && !empty($conflictRecords['list'])) {
+                    foreach ($conflictRecords['list'] as $conflict) {
+                        if ($conflict['Type'] == 'TXT') {
+                            $this->deleteDomainRecord($conflict['RecordId']);
+                        }
+                    }
+                    $this->error = null;
+                    $data = $this->send_reuqest('POST', '/zones/'.$this->domainid.'/dns_records', $param);
+                }
+            }
+        }
         return is_array($data) ? $data['result']['id'] : false;
     }
 
