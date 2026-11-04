@@ -111,6 +111,8 @@ jobs:
               "app/controller/Auth.php" => ["SsoBridge"],
               "app/controller/Sso.php" => ["SsoBridge"],
               "app/controller/DatahubCertificate.php" => ["datahub-certificate-scopes.json", "isApi"],
+              "app/lib/dns/huawei.php" => ["type \x27TXT\x27", "Conflicts with Record Set"],
+              "app/lib/dns/cloudflare.php" => ["already exists", "record with that host"],
               "app/view/common/layout.html" => ["ssoEnabled", "ssoCsrfToken"],
             ];
             foreach ($checks as $file => $needles) {
@@ -132,6 +134,7 @@ jobs:
           php tests/UpdateUtilsTest.php
           php tests/SsoBridgeTest.php
           php tests/DatahubCertificateTest.php
+          php tests/DnsRecordConflictOverrideTest.php
           find app config route tests -type f -name '*.php' -print0 \
             | sort -z \
             | xargs -0 -r -n 1 php -l > /dev/null
@@ -433,6 +436,8 @@ jobs:
               "app/controller/Auth.php" => ["SsoBridge"],
               "app/controller/Sso.php" => ["SsoBridge"],
               "app/controller/DatahubCertificate.php" => ["datahub-certificate-scopes.json", "isApi"],
+              "app/lib/dns/huawei.php" => ["type \x27TXT\x27", "Conflicts with Record Set"],
+              "app/lib/dns/cloudflare.php" => ["already exists", "record with that host"],
               "app/view/common/layout.html" => ["ssoEnabled", "ssoCsrfToken"],
             ];
             foreach ($checks as $file => $needles) {
@@ -454,6 +459,7 @@ jobs:
           php tests/UpdateUtilsTest.php
           php tests/SsoBridgeTest.php
           php tests/DatahubCertificateTest.php
+          php tests/DnsRecordConflictOverrideTest.php
           find app config route tests -type f -name '*.php' -print0 \
             | sort -z \
             | xargs -0 -r -n 1 php -l > /dev/null
