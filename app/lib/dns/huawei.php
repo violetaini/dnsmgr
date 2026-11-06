@@ -148,42 +148,30 @@ class huawei implements DnsInterface
         if ($Weight > 0) $params['weight'] = intval($Weight);
         $data = $this->send_request('POST', '/v2.1/zones/'.$this->domainid.'/recordsets', null, $params);
         if (!$data && !empty($this->error)) {
-            // 自动处理冲突与覆盖：
-            // 1. 添加 CNAME 与已有 TXT 冲突（如 DCV 委派），删除同名旧 TXT 后重试
-            // 2. 添加 TXT 与已有 CNAME 冲突，删除同名旧 CNAME 后重试
-            // 3. 同名同类型记录已存在（already exists），清理旧记录后重试覆盖
-            if ($Type == 'CNAME' && (stripos($this->error, "type 'TXT'") !== false || stripos($this->error, "Conflicts with Record Set") !== false)) {
-                $conflictRecords = $this->getSubDomainRecords($rawName, 1, 50, 'TXT');
-                if ($conflictRecords && !empty($conflictRecords['list'])) {
-                    foreach ($conflictRecords['list'] as $conflict) {
-                        if ($conflict['Type'] == 'TXT') {
-                            $this->deleteDomainRecord($conflict['RecordId']);
-                        }
-                    }
-                    $this->error = null;
-                    $data = $this->send_request('POST', '/v2.1/zones/'.$this->domainid.'/recordsets', null, $params);
-                }
-            } elseif ($Type == 'TXT' && (stripos($this->error, "type 'CNAME'") !== false || stripos($this->error, "Conflicts with Record Set") !== false)) {
-                $conflictRecords = $this->getSubDomainRecords($rawName, 1, 50, 'CNAME');
-                if ($conflictRecords && !empty($conflictRecords['list'])) {
-                    foreach ($conflictRecords['list'] as $conflict) {
-                        if ($conflict['Type'] == 'CNAME') {
-                            $this->deleteDomainRecord($conflict['RecordId']);
-                        }
-                    }
-                    $this->error = null;
-                    $data = $this->send_request('POST', '/v2.1/zones/'.$this->domainid.'/recordsets', null, $params);
-                }
-            } elseif (stripos($this->error, "already exists") !== false) {
-                $existingRecords = $this->getSubDomainRecords($rawName, 1, 50, $Type);
+            // 自动处理冲突与覆盖 / 幂等性：
+            if (stripos($this->error, "already exists") !== false || stripos($this->error, "Conflicts with Record Set") !== false) {
+                $existingRecords = $this->getSubDomainRecords($rawName, 1, 50);
                 if ($existingRecords && !empty($existingRecords['list'])) {
-                    foreach ($existingRecords['list'] as $existing) {
-                        if ($existing['Type'] == $Type) {
-                            $this->deleteDomainRecord($existing['RecordId']);
+                    // 1. 如果已存在同类型、同值的记录，直接返回已有记录 ID（幂等成功，不报错）
+                    foreach ($existingRecords['list'] as $rec) {
+                        $recVal = is_array($rec['Value']) ? ($rec['Value'][0] ?? '') : $rec['Value'];
+                        if ($rec['Type'] === $Type && rtrim(trim((string)$recVal, '"'), '.') === rtrim(trim((string)$Value, '"'), '.')) {
+                            $this->error = null;
+                            return $rec['RecordId'];
                         }
                     }
-                    $this->error = null;
-                    $data = $this->send_request('POST', '/v2.1/zones/'.$this->domainid.'/recordsets', null, $params);
+                    // 2. 存在冲突记录（如添加 CNAME 时已有 TXT，或已有不同值的记录），清理冲突后重试
+                    $deletedAny = false;
+                    foreach ($existingRecords['list'] as $conflict) {
+                        if ($Type === 'CNAME' || $conflict['Type'] === $Type || $conflict['Type'] === 'CNAME') {
+                            $this->deleteDomainRecord($conflict['RecordId']);
+                            $deletedAny = true;
+                        }
+                    }
+                    if ($deletedAny) {
+                        $this->error = null;
+                        $data = $this->send_request('POST', '/v2.1/zones/'.$this->domainid.'/recordsets', null, $params);
+                    }
                 }
             }
         }

@@ -163,6 +163,90 @@ $tests['cloudflare: automatically deletes conflicting TXT when adding CNAME'] = 
     assertSameVal(2, $client->postAttempts, 'Should have retried the CF POST request');
 };
 
+$tests['cloudflare: returns existing record ID when identical CNAME already exists'] = function () {
+    $dns = new cloudflare('example.org', 'cf-zone-id', 'user@example.com', 'api-key');
+    $client = new FakeCloudflareClient();
+    $client->failFirstPost = true;
+    $client->firstPostError = "An A, AAAA, or CNAME record with that host already exists.";
+
+    // Mock GET to return existing CNAME with matching target
+    $clientRef = new ReflectionClass($client);
+    $origRequest = $clientRef->getMethod('request');
+
+    // Subclass or anonymous class
+    $customClient = new class extends FakeCloudflareClient {
+        public function request($method, $url, $params = null) {
+            if ($method === 'GET' && strpos($url, '/dns_records') !== false) {
+                return [
+                    'success' => true,
+                    'result_info' => ['total_count' => 1],
+                    'result' => [
+                        [
+                            'id' => 'existing-cname-id',
+                            'name' => '_acme-challenge.status.example.org',
+                            'type' => 'CNAME',
+                            'content' => 'status.example.org.uuid.dcv.cloudflare.com',
+                            'proxied' => false,
+                            'ttl' => 600,
+                        ]
+                    ]
+                ];
+            }
+            return parent::request($method, $url, $params);
+        }
+    };
+    $customClient->failFirstPost = true;
+
+    $prop = new ReflectionProperty(cloudflare::class, 'client');
+    $prop->setAccessible(true);
+    $prop->setValue($dns, $customClient);
+
+    $recId = $dns->addDomainRecord('_acme-challenge.status', 'CNAME', 'status.example.org.uuid.dcv.cloudflare.com', '0', 600);
+
+    assertSameVal('existing-cname-id', $recId, 'Should return existing CNAME record ID without error');
+    assertSameVal([], $customClient->deletedRecords, 'Should not delete existing matching CNAME');
+};
+
+$tests['huawei: returns existing record ID when identical record already exists'] = function () {
+    $dns = new huawei('example.com', 'test-zone-id', 'test-ak', 'test-sk', 'cn-north-4');
+    $customClient = new class extends FakeHuaweiClient {
+        public function request($method, $path, $query = null, $params = null) {
+            if ($method === 'GET' && strpos($path, '/recordsets') !== false) {
+                return [
+                    'metadata' => ['total_count' => 1],
+                    'recordsets' => [
+                        [
+                            'id' => 'existing-hw-cname-id',
+                            'name' => '_acme-challenge.status.example.com.',
+                            'zone_name' => 'example.com.',
+                            'type' => 'CNAME',
+                            'records' => ['status.example.com.uuid.dcv.cloudflare.com.'],
+                            'line' => 'default_view',
+                            'ttl' => 600,
+                            'status' => 'ACTIVE',
+                            'weight' => 1,
+                            'description' => 'Cloudflare DCV 委派',
+                            'updated_at' => '2026-01-01T00:00:00Z',
+                        ]
+                    ]
+                ];
+            }
+            return parent::request($method, $path, $query, $params);
+        }
+    };
+    $customClient->failFirstPost = true;
+    $customClient->firstPostError = "This record set name already exists. Conflicts with Record Set '_acme-challenge.status.example.com.' type 'CNAME' in line 'default_view'.";
+
+    $prop = new ReflectionProperty(huawei::class, 'client');
+    $prop->setAccessible(true);
+    $prop->setValue($dns, $customClient);
+
+    $recId = $dns->addDomainRecord('_acme-challenge.status', 'CNAME', 'status.example.com.uuid.dcv.cloudflare.com', 'default_view', 600);
+
+    assertSameVal('existing-hw-cname-id', $recId, 'Should return existing Huawei CNAME record ID');
+    assertSameVal([], $customClient->deletedRecords, 'Should not delete existing matching record');
+};
+
 $passed = 0;
 foreach ($tests as $name => $test) {
     $test();

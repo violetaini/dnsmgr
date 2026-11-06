@@ -178,17 +178,30 @@ class cloudflare implements DnsInterface
         }
         $data = $this->send_reuqest('POST', '/zones/'.$this->domainid.'/dns_records', $param);
         if (!$data && !empty($this->error)) {
-            // 自动处理冲突与覆盖：添加 CNAME 时如果已有 TXT 冲突，自动清理旧 TXT 并重试
-            if ($Type == 'CNAME' && (stripos($this->error, "already exists") !== false || stripos($this->error, "record with that host") !== false)) {
-                $conflictRecords = $this->getSubDomainRecords($Name, 1, 50, 'TXT');
+            // 自动处理冲突与覆盖 / 幂等性：
+            if (stripos($this->error, "already exists") !== false || stripos($this->error, "record with that host") !== false) {
+                $conflictRecords = $this->getSubDomainRecords($Name, 1, 50);
                 if ($conflictRecords && !empty($conflictRecords['list'])) {
-                    foreach ($conflictRecords['list'] as $conflict) {
-                        if ($conflict['Type'] == 'TXT') {
-                            $this->deleteDomainRecord($conflict['RecordId']);
+                    // 1. 如果已存在同类型、同值的记录，直接返回已有记录 ID（幂等成功，不报错）
+                    foreach ($conflictRecords['list'] as $rec) {
+                        $recVal = is_array($rec['Value']) ? ($rec['Value'][0] ?? '') : $rec['Value'];
+                        if ($rec['Type'] === $Type && rtrim((string)$recVal, '.') === rtrim((string)$Value, '.')) {
+                            $this->error = null;
+                            return $rec['RecordId'];
                         }
                     }
-                    $this->error = null;
-                    $data = $this->send_reuqest('POST', '/zones/'.$this->domainid.'/dns_records', $param);
+                    // 2. 否则清理冲突记录（如已有 TXT/A/旧CNAME）并重试
+                    $deletedAny = false;
+                    foreach ($conflictRecords['list'] as $conflict) {
+                        if ($Type === 'CNAME' || $conflict['Type'] === $Type || $conflict['Type'] === 'CNAME') {
+                            $this->deleteDomainRecord($conflict['RecordId']);
+                            $deletedAny = true;
+                        }
+                    }
+                    if ($deletedAny) {
+                        $this->error = null;
+                        $data = $this->send_reuqest('POST', '/zones/'.$this->domainid.'/dns_records', $param);
+                    }
                 }
             }
         }
