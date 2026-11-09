@@ -1,5 +1,9 @@
 <?php
 
+if (file_exists(__DIR__ . '/../vendor/autoload.php')) {
+    require_once __DIR__ . '/../vendor/autoload.php';
+}
+require_once __DIR__ . '/../app/lib/client/HuaweiCloud.php';
 require_once __DIR__ . '/../app/lib/DnsInterface.php';
 require_once __DIR__ . '/../app/lib/dns/huawei.php';
 require_once __DIR__ . '/../app/lib/dns/cloudflare.php';
