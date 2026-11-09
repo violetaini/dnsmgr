@@ -10,6 +10,7 @@ require_once __DIR__ . '/../app/lib/dns/cloudflare.php';
 
 use app\lib\dns\huawei;
 use app\lib\dns\cloudflare;
+use app\lib\client\HuaweiCloud;
 
 function assertCondition($condition, $message)
 {
@@ -25,8 +26,13 @@ function assertSameVal($expected, $actual, $message)
     }
 }
 
-class FakeHuaweiClient
+class FakeHuaweiClient extends HuaweiCloud
 {
+    public function __construct()
+    {
+        parent::__construct('test-ak', 'test-sk', 'dns.myhuaweicloud.com', false);
+    }
+
     public $requests = [];
     public $failFirstPost = false;
     public $firstPostError = "This record set name already exists. Conflicts with Record Set '_acme-challenge.api.example.com.' type 'TXT' in line 'default_view'.";
