@@ -3,6 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
+  {if $ssoReturnTo neq ''}<meta http-equiv="refresh" content="0;url={$ssoReturnTo}">{/if}
   <title>{$ssoTitle} · DNS 管理系统</title>
   <link rel="stylesheet" href="/static/css/sso.css?v=1">
 </head>
@@ -17,6 +18,8 @@
       <input type="hidden" name="_sso_csrf" value="{$ssoLogoutCsrf}">
       <button type="submit">确认退出</button>
     </form>
+    {elseif $ssoReturnTo neq '' /}
+    <a class="action" href="{$ssoReturnTo}">返回原页面 <span aria-hidden="true">→</span></a>
     {else/}
     <a class="action" href="/sso/start">Chitanda 统一登录 <span aria-hidden="true">→</span></a>
     {/if}

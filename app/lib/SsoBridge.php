@@ -8,6 +8,8 @@ use think\facade\Db;
 /** Optional loopback identity-agent adapter. Never accepts a browser identity header. */
 class SsoBridge
 {
+    private const RETURN_COOKIE = '__Host-chitanda_dns_return';
+
     public static function configured(): bool
     {
         return is_file(app()->getRootPath().'.sso.json') || is_file(app()->getRootPath().'.sso-required');
@@ -77,9 +79,65 @@ class SsoBridge
         return $response;
     }
 
-    private function page(string $title, string $message, int $status=200, string $csrf='')
+    private static function returnTarget($value): string
     {
-        return view('auth/sso', ['ssoTitle'=>$title, 'ssoMessage'=>$message, 'ssoLogoutCsrf'=>$csrf])
+        if (!is_string($value) || strlen($value) > 1200 || !str_starts_with($value, '/') ||
+            str_starts_with($value, '//') || str_contains($value, '\\') || str_contains($value, '"') ||
+            preg_match('/[\x00-\x20\x7f]|%(?:0[0-9a-f]|1[0-9a-f]|7f)/i', $value) || !preg_match('//u', $value)) return '/';
+
+        $parts = parse_url($value);
+        $path = $parts['path'] ?? '';
+        // Only resume page views. Some other GET routes perform operations.
+        $pages = [
+            'domain(?:/(?:add|category|dnscheck|expirenotice))?', 'account(?:/(?:add|edit))?', 'user', 'log',
+            'record/(?:\d+|search|smartparse|batchadd|batchedit|(?:import|log|alias|weight|batchadd)/\d+)',
+            'cloudflare/(?:hostnames|tunnels)/\d+', 'dmonitor/(?:overview|task(?:/(?:add|edit|info/\d+))?)',
+            'optimizeip/(?:opipset|opiplist|opipform/(?:add|edit))', 'schedule/stask(?:/(?:add|edit))?',
+            'cert/(?:certaccount|deployaccount|certorder|deploytask|cname|certset|(?:account|order|deploy)/(?:add|edit))',
+            'system/(?:loginset|noticeset|proxyset|cronset|update)',
+        ];
+        if (!preg_match('~\A/(?:'.implode('|', $pages).')/?\z~', $path)) return '/';
+        parse_str(str_replace(';', '&', $parts['query'] ?? ''), $query);
+        // ThinkPHP uses these parameters to override the route or method.
+        if (array_intersect(['s', '_method'], array_map('strtolower', array_keys($query)))) return '/';
+        return $value;
+    }
+
+    private function returnCookie(string $value, int $expires): void
+    {
+        setcookie(self::RETURN_COOKIE, $value, [
+            'expires'=>$expires, 'path'=>'/', 'secure'=>true, 'httponly'=>true, 'samesite'=>'Lax',
+        ]);
+    }
+
+    private function rememberReturn(string $target, string $location, string $key): void
+    {
+        if ($target === '/') return;
+        $rawQuery = parse_url($location, PHP_URL_QUERY);
+        if (!is_string($rawQuery)) return;
+        parse_str($rawQuery, $query);
+        $state = $query['state'] ?? null;
+        if (!is_string($state) || !preg_match('/\A[A-Za-z0-9_-]{43}\z/', $state)) return;
+        $payload = base64_encode(json_encode(['state'=>$state, 'target'=>$target], JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
+        $this->returnCookie($payload.'.'.hash_hmac('sha256', 'dns-return:'.$payload, $key), time()+300);
+    }
+
+    private function consumeReturn($state, string $key): string
+    {
+        $cookie = $_COOKIE[self::RETURN_COOKIE] ?? '';
+        if (!is_string($cookie) || $cookie === '') return '/';
+        $this->returnCookie('', time()-3600);
+        if (strlen($cookie) > 2600 || !is_string($state)) return '/';
+        [$payload, $signature] = array_pad(explode('.', $cookie, 2), 2, '');
+        if (!hash_equals(hash_hmac('sha256', 'dns-return:'.$payload, $key), $signature)) return '/';
+        $decoded = base64_decode($payload, true);
+        $saved = is_string($decoded) ? json_decode($decoded, true) : null;
+        return ($saved['state'] ?? null) === $state ? self::returnTarget($saved['target'] ?? null) : '/';
+    }
+
+    private function page(string $title, string $message, int $status=200, string $csrf='', string $returnTo='')
+    {
+        return view('auth/sso', ['ssoTitle'=>$title, 'ssoMessage'=>$message, 'ssoLogoutCsrf'=>$csrf, 'ssoReturnTo'=>$returnTo])
             ->code($status)->header(['Cache-Control'=>'no-store','Referrer-Policy'=>'same-origin','X-Frame-Options'=>'DENY']);
     }
 
@@ -89,8 +147,16 @@ class SsoBridge
             return $operation()->header(['Cache-Control'=>'no-store','Referrer-Policy'=>'same-origin']);
         } catch (\RuntimeException $e) {
             $status=in_array($e->getCode(),[400,401,403,405,429,503],true)?$e->getCode():503;
-            if ($status===401 && $request->isGet() && !$request->isAjax()) return redirect('/login');
-            if ($request->isAjax() || !$request->isGet()) return json(['code'=>-1,'msg'=>$status===401?'请重新统一登录':'统一身份验证未通过，请稍后重试'])->code($status);
+            $async = $request->isAjax() || $request->header('x-dns-sso-async') === '1';
+            if ($status===401 && $request->isGet() && !$async) {
+                $target = self::returnTarget($_SERVER['REQUEST_URI'] ?? '');
+                return redirect($target === '/' ? '/login' : '/login?return_to='.rawurlencode($target))
+                    ->header(['Cache-Control'=>'no-store']);
+            }
+            if ($async || !$request->isGet()) {
+                return json(['code'=>-1,'msg'=>$status===401?'请重新统一登录':'统一身份验证未通过，请稍后重试'])
+                    ->code($status)->header(['Cache-Control'=>'no-store'] + ($status===401 ? ['X-DNS-SSO-Reauth'=>'1'] : []));
+            }
             return $this->page('暂时无法进入', '统一身份验证未通过，或此账号尚未获准访问。', $status);
         }
     }
@@ -106,7 +172,9 @@ class SsoBridge
     {
         return $this->respond($request,function() use ($request) {
             if (!$request->isGet()) return response('Method not allowed',405);
-            $r=$this->rpc('start',$request,$this->config());
+            $c=$this->config();
+            $r=$this->rpc('start',$request,$c);
+            $this->rememberReturn(self::returnTarget($request->get('return_to')), $r['location'], $c['key']);
             return $this->withCookies(redirect($r['location']),$r);
         });
     }
@@ -116,8 +184,13 @@ class SsoBridge
         return $this->respond($request,function() use ($request) {
             if (!$request->isGet()) return response('Method not allowed',405);
             if ($request->get('loggedout')==='1') return redirect('/login?loggedout=1');
-            $r=$this->rpc('callback',$request,$this->config(),['query'=>$_SERVER['QUERY_STRING'] ?? '']);
-            return $this->withCookies(redirect('/'),$r);
+            $c=$this->config();
+            $r=$this->rpc('callback',$request,$c,['query'=>$_SERVER['QUERY_STRING'] ?? '']);
+            $target=$this->consumeReturn($request->get('state'),$c['key']);
+            // A new same-origin document resumes navigation without carrying the
+            // cross-site OAuth redirect chain into the protected management route.
+            $response=$target==='/' ? redirect('/') : $this->page('正在返回原页面','登录已恢复。',200,'',$target);
+            return $this->withCookies($response,$r);
         });
     }
 
