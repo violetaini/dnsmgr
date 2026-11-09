@@ -3,6 +3,15 @@
 if (file_exists(__DIR__ . '/../vendor/autoload.php')) {
     require_once __DIR__ . '/../vendor/autoload.php';
 }
+if (file_exists(__DIR__ . '/../app/common.php')) {
+    require_once __DIR__ . '/../app/common.php';
+}
+if (!function_exists('isNullOrEmpty')) {
+    function isNullOrEmpty($str)
+    {
+        return !isset($str) || $str === '';
+    }
+}
 require_once __DIR__ . '/../app/lib/client/HuaweiCloud.php';
 require_once __DIR__ . '/../app/lib/DnsInterface.php';
 require_once __DIR__ . '/../app/lib/dns/huawei.php';
