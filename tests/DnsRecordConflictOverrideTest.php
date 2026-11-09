@@ -113,10 +113,28 @@ class FakeCloudflareClient
     }
 }
 
+function makeHuaweiTestDns(): huawei {
+    return new huawei([
+        'domain' => 'example.com',
+        'domainid' => 'test-zone-id',
+        'AccessKeyId' => 'test-ak',
+        'SecretAccessKey' => 'test-sk',
+    ]);
+}
+
+function makeCloudflareTestDns(): cloudflare {
+    return new cloudflare([
+        'domain' => 'example.org',
+        'domainid' => 'cf-zone-id',
+        'email' => 'user@example.com',
+        'apikey' => 'api-key',
+    ]);
+}
+
 $tests = [];
 
 $tests['huawei: automatically deletes conflicting TXT when adding CNAME'] = function () {
-    $dns = new huawei('example.com', 'test-zone-id', 'test-ak', 'test-sk', 'cn-north-4');
+    $dns = makeHuaweiTestDns();
     $client = new FakeHuaweiClient();
     $client->failFirstPost = true;
 
@@ -132,7 +150,7 @@ $tests['huawei: automatically deletes conflicting TXT when adding CNAME'] = func
 };
 
 $tests['huawei: normal creation without conflict succeeds directly'] = function () {
-    $dns = new huawei('example.com', 'test-zone-id', 'test-ak', 'test-sk', 'cn-north-4');
+    $dns = makeHuaweiTestDns();
     $client = new FakeHuaweiClient();
     $client->failFirstPost = false;
 
@@ -148,7 +166,7 @@ $tests['huawei: normal creation without conflict succeeds directly'] = function 
 };
 
 $tests['cloudflare: automatically deletes conflicting TXT when adding CNAME'] = function () {
-    $dns = new cloudflare('example.org', 'cf-zone-id', 'user@example.com', 'api-key');
+    $dns = makeCloudflareTestDns();
     $client = new FakeCloudflareClient();
     $client->failFirstPost = true;
 
@@ -164,7 +182,7 @@ $tests['cloudflare: automatically deletes conflicting TXT when adding CNAME'] = 
 };
 
 $tests['cloudflare: returns existing record ID when identical CNAME already exists'] = function () {
-    $dns = new cloudflare('example.org', 'cf-zone-id', 'user@example.com', 'api-key');
+    $dns = makeCloudflareTestDns();
     $client = new FakeCloudflareClient();
     $client->failFirstPost = true;
     $client->firstPostError = "An A, AAAA, or CNAME record with that host already exists.";
@@ -208,7 +226,7 @@ $tests['cloudflare: returns existing record ID when identical CNAME already exis
 };
 
 $tests['huawei: returns existing record ID when identical record already exists'] = function () {
-    $dns = new huawei('example.com', 'test-zone-id', 'test-ak', 'test-sk', 'cn-north-4');
+    $dns = makeHuaweiTestDns();
     $customClient = new class extends FakeHuaweiClient {
         public function request($method, $path, $query = null, $params = null) {
             if ($method === 'GET' && strpos($path, '/recordsets') !== false) {
