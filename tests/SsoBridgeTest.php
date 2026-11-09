@@ -12,6 +12,12 @@ namespace think\facade {
         }; }
     }
 }
+namespace app\lib {
+    function setcookie($name, $value, $options) {
+        $GLOBALS['sso_test_cookies'][$name] = [$value, $options];
+        return true;
+    }
+}
 namespace {
 require __DIR__.'/../app/lib/SsoBridge.php';
 class FakeResponse {
@@ -44,11 +50,12 @@ class Bridge extends \app\lib\SsoBridge {
     public array $ops=[];
     public int $failure=0;
     public string $subject='subject-A';
+    public string $state='';
     protected function config(): array { return ['origin'=>'https://dns.example.com','key'=>str_repeat('k',48),'bindings'=>['subject-A'=>7],'accountUrl'=>'https://identity.example.com/portal']; }
     protected function rpc(string $op,$request,array $c,array $extra=[]): array {
         $this->ops[]=$op;
         if($this->failure) throw new \RuntimeException('Unavailable',$this->failure);
-        return ['subject'=>$this->subject,'roles'=>['admin'],'csrfToken'=>'csrf','location'=>'https://identity.example.com/oauth/authorize','redirect_to'=>'https://identity.example.com/oauth/logout'];
+        return ['subject'=>$this->subject,'roles'=>['admin'],'csrfToken'=>'csrf','location'=>'https://identity.example.com/oauth/authorize'.($this->state ? '?state='.$this->state : ''),'redirect_to'=>'https://identity.example.com/oauth/logout'];
     }
 }
 $count=0;
@@ -70,6 +77,15 @@ $b=new Bridge();$r=$b->login(new FakeRequest('/login','GET',[],['loggedout'=>'1'
 $r=(new Bridge())->callback(new FakeRequest('/sso/callback','GET',[],['loggedout'=>'1']));same('/login?loggedout=1',$r->headers['Location'],'Logout callback preserves signed-out state');
 foreach(['/login','/sso/start','/sso/callback'] as $p){$b=new Bridge();$b->handle(new FakeRequest($p),$next);same([],$b->ops,'Native controller handles public auth route');}
 $b=new Bridge();$b->failure=401;$r=$b->handle(new FakeRequest('/user'),$next);same('/login',$r->headers['Location'],'Invalid session redirects');
+$_SERVER['REQUEST_URI']='/domain?aid=7';
+$r=$b->handle(new FakeRequest('/domain'),$next);
+same('/login?return_to=%2Fdomain%3Faid%3D7',$r->headers['Location'],'Expired navigation remembers the destination');
+$r=$b->handle(new FakeRequest('/domain','GET',['x-dns-sso-async'=>'1']),$next);
+same(401,$r->status,'Fetch GET does not follow an OAuth redirect as an API response');
+same('1',$r->headers['X-DNS-SSO-Reauth'],'Only bridge authentication errors trigger browser recovery');
+$_SERVER['REQUEST_URI']='/cleancache';
+same('/login',$b->handle(new FakeRequest('/cleancache'),$next)->headers['Location'],'Side-effectful GET cannot be resumed');
+unset($_SERVER['REQUEST_URI']);
 $r=$b->handle(new FakeRequest('/user/op','POST'),$next);same(401,$r->status,'Writes never redirect or fall back');
 $b=new Bridge();$b->failure=503;same(503,$b->handle(new FakeRequest('/'),$next)->status,'Identity outage fails closed');
 $b=new Bridge();$b->subject='other';same(403,$b->handle(new FakeRequest('/'),$next)->status,'No automatic username mapping');
@@ -80,6 +96,29 @@ same(403,(new Bridge())->handle(new FakeRequest('/cleancache','GET',['sec-fetch-
 $req=new FakeRequest('/logout');$req->ssoCsrfToken='csrf';$r=(new Bridge())->logout($req);same(200,$r->status,'Legacy GET logout confirmation');same('csrf',json_decode($r->body,true)['ssoLogoutCsrf'],'Confirmation receives current CSRF');same('same-origin',$r->headers['Referrer-Policy'],'Form Origin must not become null in Chromium');
 $r=(new Bridge())->account(new FakeRequest('/sso/account'));same('https://identity.example.com/portal',$r->headers['Location'],'Passwords managed centrally');
 $r=(new Bridge())->account(new FakeRequest('/setpwd','POST'));same(410,$r->status,'Native password writes disabled');
+
+$b = new Bridge();
+$b->state = str_repeat('s', 43);
+$cookieName = '__Host-chitanda_dns_return';
+$target = '/record/5?subdomain=www&aid=7#records';
+$b->start(new FakeRequest('/sso/start','GET',[],['return_to'=>$target]));
+[$saved, $options] = $GLOBALS['sso_test_cookies'][$cookieName];
+same([true,true,'Lax','/'],[$options['secure'],$options['httponly'],$options['samesite'],$options['path']],'Return cookie is host-only and protected');
+$_COOKIE[$cookieName] = $saved;
+$r = $b->callback(new FakeRequest('/sso/callback','GET',[],['state'=>$b->state]));
+same(200,$r->status,'Callback renders a same-origin navigation document');
+same($target,json_decode($r->body,true)['ssoReturnTo'],'Callback resumes page, query and fragment');
+same('',$GLOBALS['sso_test_cookies'][$cookieName][0],'Successful callback clears the return cookie');
+foreach ([[$saved.'x',$b->state],[$saved,str_repeat('b',43)]] as [$supplied,$state]) {
+    $_COOKIE[$cookieName] = $supplied;
+    same('/',$b->callback(new FakeRequest('/sso/callback','GET',[],['state'=>$state]))->headers['Location'],'Tampered or mismatched return cookie falls back home');
+}
+unset($_COOKIE[$cookieName]);
+foreach (['https://elsewhere.example','//elsewhere.example','/\\elsewhere.example','/domain/../logout','/domain?%73=/cleancache','/domain?%5fmethod=POST','/domain?keyword=%0d%0a','/system/mailtest','/logout','/api/domain','/record/delete/5'] as $unsafe) {
+    unset($GLOBALS['sso_test_cookies'][$cookieName]);
+    $b->start(new FakeRequest('/sso/start','GET',[],['return_to'=>$unsafe]));
+    same(false,isset($GLOBALS['sso_test_cookies'][$cookieName]),'Unsafe destination cannot be saved: '.$unsafe);
+}
 foreach([['subject'=>'subject-A','roles'=>[]],['subject'=>'other','roles'=>['root']]] as $profile) {try{\app\lib\SsoBridge::mappedUserId($profile,['subject-A'=>7]);throw new \Exception('Unexpected grant');}catch(\RuntimeException $e){same(403,$e->getCode(),'Explicit binding and role required');}}
 echo "SsoBridge: $count assertions passed\n";
 }
