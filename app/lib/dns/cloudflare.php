@@ -14,6 +14,7 @@ class cloudflare implements DnsInterface
     private $domain;
     private $domainid;
     private $proxy;
+    private $client = null;
 
     function __construct($config)
     {
@@ -327,6 +328,18 @@ class cloudflare implements DnsInterface
     private function send_reuqest($method, $path, $params = null)
     {
         $url = $this->baseUrl . $path;
+
+        if ($this->client) {
+            $arr = $this->client->request($method, $url, $params);
+            if (is_array($arr)) {
+                if (!empty($arr['success'])) {
+                    return $arr;
+                }
+                $this->setError(isset($arr['errors'][0]['message']) ? $arr['errors'][0]['message'] : '未知错误');
+                return false;
+            }
+            return $arr;
+        }
 
         if ($this->auth == 0) {
             $headers = [
