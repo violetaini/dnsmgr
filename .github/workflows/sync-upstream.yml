@@ -111,7 +111,7 @@ jobs:
               "app/controller/Auth.php" => ["SsoBridge"],
               "app/controller/Sso.php" => ["SsoBridge"],
               "app/controller/DatahubCertificate.php" => ["datahub-certificate-scopes.json", "isApi"],
-              "app/lib/dns/huawei.php" => ["type \x27TXT\x27", "Conflicts with Record Set"],
+              "app/lib/dns/huawei.php" => ["already exists", "Conflicts with Record Set"],
               "app/lib/dns/cloudflare.php" => ["already exists", "record with that host"],
               "app/view/common/layout.html" => ["ssoEnabled", "ssoCsrfToken"],
             ];
@@ -436,7 +436,7 @@ jobs:
               "app/controller/Auth.php" => ["SsoBridge"],
               "app/controller/Sso.php" => ["SsoBridge"],
               "app/controller/DatahubCertificate.php" => ["datahub-certificate-scopes.json", "isApi"],
-              "app/lib/dns/huawei.php" => ["type \x27TXT\x27", "Conflicts with Record Set"],
+              "app/lib/dns/huawei.php" => ["already exists", "Conflicts with Record Set"],
               "app/lib/dns/cloudflare.php" => ["already exists", "record with that host"],
               "app/view/common/layout.html" => ["ssoEnabled", "ssoCsrfToken"],
             ];
