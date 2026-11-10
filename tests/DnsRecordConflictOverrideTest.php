@@ -284,6 +284,165 @@ $tests['huawei: returns existing record ID when identical record already exists'
     assertSameVal([], $customClient->deletedRecords, 'Should not delete existing matching record');
 };
 
+$tests['huawei: handles Duplicate recordset exists error for existing TXT idempotently and cleans stale ACME TXT'] = function () {
+    $dns = makeHuaweiTestDns();
+    $customClient = new class extends FakeHuaweiClient {
+        public function request($method, $path, $query = null, $params = null) {
+            if ($method === 'GET' && strpos($path, '/recordsets') !== false) {
+                return [
+                    'metadata' => ['total_count' => 2],
+                    'recordsets' => [
+                        [
+                            'id' => 'stale-txt-id',
+                            'name' => '_acme-challenge.dns.example.com.',
+                            'zone_name' => 'example.com.',
+                            'type' => 'TXT',
+                            'records' => ['"old-stale-token"'],
+                            'line' => 'default_view',
+                            'ttl' => 600,
+                            'status' => 'ACTIVE',
+                            'weight' => 1,
+                            'description' => 'Cloudflare 证书验证',
+                            'updated_at' => '2026-11-10T05:36:23Z',
+                        ],
+                        [
+                            'id' => 'existing-dup-txt-id',
+                            'name' => '_acme-challenge.dns.example.com.',
+                            'zone_name' => 'example.com.',
+                            'type' => 'TXT',
+                            'records' => ['"u07kmfPoKRHlAtsN4x9aQqfj979rxRjoTCLmdzSVL9A"'],
+                            'line' => 'default_view',
+                            'ttl' => 600,
+                            'status' => 'ACTIVE',
+                            'weight' => 1,
+                            'description' => 'Cloudflare 证书验证',
+                            'updated_at' => '2026-11-10T05:38:21Z',
+                        ],
+                    ]
+                ];
+            }
+            return parent::request($method, $path, $query, $params);
+        }
+    };
+    $customClient->failFirstPost = true;
+    $customClient->firstPostError = 'Duplicate recordset exists (name: _acme-challenge.dns.example.com., type: TXT, line: default_view, records: "u07kmfPoKRHlAtsN4x9aQqfj979rxRjoTCLmdzSVL9A")';
+
+    $prop = new ReflectionProperty(huawei::class, 'client');
+    $prop->setAccessible(true);
+    $prop->setValue($dns, $customClient);
+
+    $recId = $dns->addDomainRecord('_acme-challenge.dns', 'TXT', 'u07kmfPoKRHlAtsN4x9aQqfj979rxRjoTCLmdzSVL9A', 'default_view', 600, 1, null, 'Cloudflare 证书验证');
+
+    assertSameVal('existing-dup-txt-id', $recId, 'Should return existing matching TXT ID on Duplicate recordset exists');
+    assertSameVal(['stale-txt-id'], $customClient->deletedRecords, 'Should delete stale ACME TXT recordset on same line while preserving current one');
+    assertSameVal(null, $dns->getError(), 'Error should be cleared on idempotent return');
+};
+
+$tests['huawei: overwrites stale Cloudflare cert verification TXT when POST succeeds alongside old recordset'] = function () {
+    $dns = makeHuaweiTestDns();
+    $customClient = new class extends FakeHuaweiClient {
+        public function request($method, $path, $query = null, $params = null) {
+            if ($method === 'GET' && strpos($path, '/recordsets') !== false) {
+                return [
+                    'metadata' => ['total_count' => 2],
+                    'recordsets' => [
+                        [
+                            'id' => 'stale-txt-id',
+                            'name' => '_acme-challenge.dns.example.com.',
+                            'zone_name' => 'example.com.',
+                            'type' => 'TXT',
+                            'records' => ['"old-stale-token"'],
+                            'line' => 'default_view',
+                            'ttl' => 600,
+                            'status' => 'ACTIVE',
+                            'weight' => 1,
+                            'description' => 'Cloudflare 证书验证',
+                            'updated_at' => '2026-11-10T05:36:23Z',
+                        ],
+                        [
+                            'id' => 'new-cname-rec-id',
+                            'name' => '_acme-challenge.dns.example.com.',
+                            'zone_name' => 'example.com.',
+                            'type' => 'TXT',
+                            'records' => ['"new-active-token"'],
+                            'line' => 'default_view',
+                            'ttl' => 600,
+                            'status' => 'ACTIVE',
+                            'weight' => 1,
+                            'description' => 'Cloudflare 证书验证',
+                            'updated_at' => '2026-11-10T05:38:21Z',
+                        ],
+                    ]
+                ];
+            }
+            return parent::request($method, $path, $query, $params);
+        }
+    };
+    $customClient->failFirstPost = false;
+
+    $prop = new ReflectionProperty(huawei::class, 'client');
+    $prop->setAccessible(true);
+    $prop->setValue($dns, $customClient);
+
+    $recId = $dns->addDomainRecord('_acme-challenge.dns', 'TXT', 'new-active-token', 'default_view', 600, 1, null, 'Cloudflare 证书验证');
+
+    assertSameVal('new-cname-rec-id', $recId, 'Should return new TXT record ID');
+    assertSameVal(['stale-txt-id'], $customClient->deletedRecords, 'Should delete stale cert TXT so weighted round-robin does not break validation');
+};
+
+$tests['huawei: isolates conflict deletion to the target line'] = function () {
+    $dns = makeHuaweiTestDns();
+    $customClient = new class extends FakeHuaweiClient {
+        public function request($method, $path, $query = null, $params = null) {
+            if ($method === 'GET' && strpos($path, '/recordsets') !== false) {
+                return [
+                    'metadata' => ['total_count' => 2],
+                    'recordsets' => [
+                        [
+                            'id' => 'dianxin-txt-id',
+                            'name' => '_acme-challenge.api.example.com.',
+                            'zone_name' => 'example.com.',
+                            'type' => 'TXT',
+                            'records' => ['"dianxin-token"'],
+                            'line' => 'Dianxin',
+                            'ttl' => 600,
+                            'status' => 'ACTIVE',
+                            'weight' => 1,
+                            'description' => '',
+                            'updated_at' => '2026-01-01T00:00:00Z',
+                        ],
+                        [
+                            'id' => 'default-txt-id',
+                            'name' => '_acme-challenge.api.example.com.',
+                            'zone_name' => 'example.com.',
+                            'type' => 'TXT',
+                            'records' => ['"default-token"'],
+                            'line' => 'default_view',
+                            'ttl' => 600,
+                            'status' => 'ACTIVE',
+                            'weight' => 1,
+                            'description' => '',
+                            'updated_at' => '2026-01-01T00:00:00Z',
+                        ],
+                    ]
+                ];
+            }
+            return parent::request($method, $path, $query, $params);
+        }
+    };
+    $customClient->failFirstPost = true;
+    $customClient->firstPostError = "Conflicts with Record Set '_acme-challenge.api.example.com.' type 'TXT' in line 'default_view'.";
+
+    $prop = new ReflectionProperty(huawei::class, 'client');
+    $prop->setAccessible(true);
+    $prop->setValue($dns, $customClient);
+
+    $recId = $dns->addDomainRecord('_acme-challenge.api', 'CNAME', 'api.example.com.uuid.dcv.cloudflare.com', 'default_view', 600);
+
+    assertSameVal('new-cname-rec-id', $recId, 'Should create CNAME after clearing only default_view conflict');
+    assertSameVal(['default-txt-id'], $customClient->deletedRecords, 'Should delete only default_view conflict and keep Dianxin intact');
+};
+
 $passed = 0;
 foreach ($tests as $name => $test) {
     $test();
