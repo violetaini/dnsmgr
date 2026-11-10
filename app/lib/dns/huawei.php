@@ -149,20 +149,25 @@ class huawei implements DnsInterface
         $data = $this->send_request('POST', '/v2.1/zones/'.$this->domainid.'/recordsets', null, $params);
         if (!$data && !empty($this->error)) {
             // 自动处理冲突与覆盖 / 幂等性：
-            if (stripos($this->error, "already exists") !== false || stripos($this->error, "Conflicts with Record Set") !== false) {
+            if ($this->isRecordConflictError($this->error)) {
                 $existingRecords = $this->getSubDomainRecords($rawName, 1, 50);
                 if ($existingRecords && !empty($existingRecords['list'])) {
-                    // 1. 如果已存在同类型、同值的记录，直接返回已有记录 ID（幂等成功，不报错）
+                    // 1. 如果同线路已存在同类型、同值的记录，直接返回已有记录 ID（幂等成功，不报错）
                     foreach ($existingRecords['list'] as $rec) {
-                        $recVal = is_array($rec['Value']) ? ($rec['Value'][0] ?? '') : $rec['Value'];
-                        if ($rec['Type'] === $Type && rtrim(trim((string)$recVal, '"'), '.') === rtrim(trim((string)$Value, '"'), '.')) {
+                        if ($rec['Type'] === $Type && $this->isSameLine($rec['Line'] ?? '', $Line) && $this->recordValuesMatch($rec['Value'], $records)) {
+                            if ($this->isAcmeVerificationTxt($rawName, $Type, $Remark)) {
+                                $this->cleanupOtherVerificationTxtRecords($existingRecords['list'], $rec['RecordId'], $Line);
+                            }
                             $this->error = null;
                             return $rec['RecordId'];
                         }
                     }
-                    // 2. 存在冲突记录（如添加 CNAME 时已有 TXT，或已有不同值的记录），清理冲突后重试
+                    // 2. 存在冲突记录（如添加 CNAME 时已有 TXT，或已有不同值的记录），仅清理同线路冲突后重试
                     $deletedAny = false;
                     foreach ($existingRecords['list'] as $conflict) {
+                        if (!$this->isSameLine($conflict['Line'] ?? '', $Line)) {
+                            continue;
+                        }
                         if ($Type === 'CNAME' || $conflict['Type'] === $Type || $conflict['Type'] === 'CNAME') {
                             $this->deleteDomainRecord($conflict['RecordId']);
                             $deletedAny = true;
@@ -175,7 +180,112 @@ class huawei implements DnsInterface
                 }
             }
         }
-        return is_array($data) ? $data['id'] : false;
+        if (is_array($data)) {
+            // 华为云同主机同线路多个 TXT 记录会变成加权轮询，覆盖旧的证书验证 TXT 可避免多视角验证(MPIC)失败
+            if ($Type === 'TXT' && $Remark === 'Cloudflare 证书验证' && $this->isAcmeVerificationTxt($rawName, $Type, $Remark)) {
+                $existingRecords = $this->getSubDomainRecords($rawName, 1, 50);
+                if ($existingRecords && !empty($existingRecords['list'])) {
+                    $this->cleanupOtherVerificationTxtRecords($existingRecords['list'], $data['id'], $Line);
+                }
+            }
+            return $data['id'];
+        }
+        return false;
+    }
+
+    /**
+     * 判断华为云返回的错误是否为记录冲突或重复记录集错误
+     */
+    private function isRecordConflictError($error)
+    {
+        if (empty($error)) {
+            return false;
+        }
+        foreach (['already exists', 'Conflicts with Record Set', 'Duplicate recordset', 'duplicate', 'conflict'] as $needle) {
+            if (stripos($error, $needle) !== false) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * 判断两条记录是否属于同一解析线路（兼容 default_view / 0 / default）
+     */
+    private function isSameLine($recLine, $targetLine)
+    {
+        $defaults = ['', '0', 'default', 'default_view'];
+        if (in_array((string)$targetLine, $defaults, true)) {
+            return in_array((string)$recLine, $defaults, true);
+        }
+        return (string)$recLine === (string)$targetLine;
+    }
+
+    /**
+     * 规范化解析记录值以便做幂等对比
+     */
+    private function normalizeRecordValues($val)
+    {
+        $items = is_array($val) ? $val : explode(',', (string)$val);
+        $normalized = [];
+        foreach ($items as $item) {
+            $norm = rtrim(trim(trim((string)$item), '"'), '.');
+            if ($norm !== '') {
+                $normalized[] = $norm;
+            }
+        }
+        sort($normalized);
+        return $normalized;
+    }
+
+    /**
+     * 判断已有记录值与目标记录值是否等价
+     */
+    private function recordValuesMatch($existingValue, array $targetRecords)
+    {
+        $existing = $this->normalizeRecordValues($existingValue);
+        $target = $this->normalizeRecordValues($targetRecords);
+        if (empty($existing) || empty($target)) {
+            return false;
+        }
+        if ($existing === $target) {
+            return true;
+        }
+        return count($target) === 1 && in_array($target[0], $existing, true);
+    }
+
+    /**
+     * 判断是否为 ACME / Cloudflare 证书验证类 TXT 记录
+     */
+    private function isAcmeVerificationTxt($rawName, $type, $remark)
+    {
+        if ($type !== 'TXT') {
+            return false;
+        }
+        if ($remark === 'Cloudflare 证书验证') {
+            return true;
+        }
+        $lower = strtolower(rtrim((string)$rawName, '.'));
+        return $lower === '_acme-challenge' || str_starts_with($lower, '_acme-challenge.');
+    }
+
+    /**
+     * 清理同线路下除当前生效记录之外的其他旧验证 TXT 记录集
+     */
+    private function cleanupOtherVerificationTxtRecords(array $records, $keepRecordId, $targetLine)
+    {
+        foreach ($records as $rec) {
+            if (($rec['Type'] ?? '') !== 'TXT') {
+                continue;
+            }
+            if (($rec['RecordId'] ?? '') === $keepRecordId) {
+                continue;
+            }
+            if (!$this->isSameLine($rec['Line'] ?? '', $targetLine)) {
+                continue;
+            }
+            $this->deleteDomainRecord($rec['RecordId']);
+        }
     }
 
     //修改解析记录
