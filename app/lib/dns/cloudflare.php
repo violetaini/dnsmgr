@@ -180,13 +180,13 @@ class cloudflare implements DnsInterface
         $data = $this->send_reuqest('POST', '/zones/'.$this->domainid.'/dns_records', $param);
         if (!$data && !empty($this->error)) {
             // 自动处理冲突与覆盖 / 幂等性：
-            if (stripos($this->error, "already exists") !== false || stripos($this->error, "record with that host") !== false) {
+            if ($this->isRecordConflictError($this->error)) {
                 $conflictRecords = $this->getSubDomainRecords($Name, 1, 50);
                 if ($conflictRecords && !empty($conflictRecords['list'])) {
                     // 1. 如果已存在同类型、同值的记录，直接返回已有记录 ID（幂等成功，不报错）
                     foreach ($conflictRecords['list'] as $rec) {
                         $recVal = is_array($rec['Value']) ? ($rec['Value'][0] ?? '') : $rec['Value'];
-                        if ($rec['Type'] === $Type && rtrim((string)$recVal, '.') === rtrim((string)$Value, '.')) {
+                        if ($rec['Type'] === $Type && rtrim(trim((string)$recVal, '"'), '.') === rtrim(trim((string)$Value, '"'), '.')) {
                             $this->error = null;
                             return $rec['RecordId'];
                         }
@@ -207,6 +207,22 @@ class cloudflare implements DnsInterface
             }
         }
         return is_array($data) ? $data['result']['id'] : false;
+    }
+
+    /**
+     * 判断 Cloudflare 返回的错误是否为记录冲突或重复记录错误
+     */
+    private function isRecordConflictError($error)
+    {
+        if (empty($error)) {
+            return false;
+        }
+        foreach (['already exists', 'record with that host', 'identical record', 'duplicate', 'conflict'] as $needle) {
+            if (stripos($error, $needle) !== false) {
+                return true;
+            }
+        }
+        return false;
     }
 
     //修改解析记录
