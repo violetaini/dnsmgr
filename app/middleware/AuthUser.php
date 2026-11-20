@@ -53,7 +53,7 @@ class AuthUser
             }
         }
         $request->islogin = $islogin;
-        $request->user = $user;
+        $request->user = $islogin ? $user : null;
         return $next($request);
     }
 }
