@@ -54,7 +54,7 @@ class Bridge extends \app\lib\SsoBridge {
 $count=0;
 function same($expected,$actual,$message) { global $count;$count++;if($expected!==$actual)throw new \RuntimeException($message); }
 $next=fn($r)=>response('<html><head></head><body>DNS</body></html>');
-foreach(['/api/record/update/1','/cron','/dmtask/status','/optimizeip/status','/qqbot/webhook'] as $p) {
+foreach(['/api/record/update/1','/cron','/dmtask/status','/optimizeip/status','/qqbot/webhook','/mcp'] as $p) {
     $b=new Bridge();$b->failure=503;$r=$b->handle(new FakeRequest($p,'POST'),$next);
     same(200,$r->status,'Machine authentication must stay upstream');same([],$b->ops,'No identity RPC for machine tasks');
 }

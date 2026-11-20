@@ -17,7 +17,7 @@ class SsoBridge
     {
         // These routes retain their own upstream signed API / task authentication.
         if (str_contains($path, '%') || str_contains($path, '\\') || preg_match('~(?:^|/)\.{1,2}(?:/|$)~', $path)) return false;
-        return str_starts_with($path, '/api/') || in_array($path, ['/cron', '/dmtask/status', '/optimizeip/status', '/qqbot/webhook'], true);
+        return str_starts_with($path, '/api/') || in_array($path, ['/cron', '/dmtask/status', '/optimizeip/status', '/qqbot/webhook', '/mcp'], true);
     }
 
     public static function mappedUserId(array $profile, array $bindings): int
